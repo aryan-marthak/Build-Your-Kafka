@@ -27,11 +27,17 @@ def handle_client(conn):
 
         body = (
             error_bytes +
-            b"\x02" +              # 1 api (compact array length)
+            b"\x03" +              # 2 api (compact array length)
             b"\x00\x12" +          # api_key = 18
             b"\x00\x00" +          # min_version = 0
             b"\x00\x04" +          # max_version = 4
             b"\x00" +              # tag buffer
+            
+            b"\x00\x4b" +          # new api_key = 75
+            b"\x00\x00" +          
+            b"\x00\x00" +
+            b"\x00" +              
+            
             b"\x00\x00\x00\x00" +  # throttle_time_ms
             b"\x00"                # tag buffer
         )

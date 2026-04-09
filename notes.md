@@ -18,3 +18,16 @@
 - Kafka is request/response over a persistent connection, not one request per socket.
 - Network reads can contain one request, part of a request, or multiple requests, so framing matters.
 - Correct byte layout still matters even when the same request repeats many times.
+
+## Stage - Concurrent Requests From Multiple Clients
+
+- Now the broker must handle more than one client at the same time.
+- Each client can keep its own TCP connection open and send multiple `ApiVersions` requests.
+- The server should accept a new connection without blocking the others, so one slow client does not stop the rest.
+- The response rules stay the same for every request: valid `message_size`, matching `correlation_id`, `error_code = 0`, and an `ApiVersions` entry for API key `18` with versions `0` to `4`.
+
+### What this stage teaches
+
+- A Kafka broker is concurrent, not single-client only.
+- Each connection must be handled independently.
+- The protocol rules do not change just because requests are coming from different clients at the same time.
