@@ -1,11 +1,15 @@
 import socket  # noqa: F401
+import threading
 
 
 def main():
     print("Logs from your program will appear here!")
     server = socket.create_server(("localhost", 9092), reuse_port=True)
-    conn, _ = server.accept()
+    while True:
+        conn, _ = server.accept()
+        threading.Thread(target=handle_client, args=(conn,), daemon=True).start()
     
+def handle_client(conn):
     while True:
         data = conn.recv(1024)
 
