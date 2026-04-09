@@ -118,3 +118,106 @@ broker response
 - This is the first time the broker uses the request version field.
 - APIs have their own version history, so one version number does not apply to every API.
 - `ApiVersions` is the broker's way of telling clients what protocol versions it supports.
+
+## Stage 4 - Building full ApiVersions response body (v4)
+
+- Now the broker sends a real `ApiVersions` response body, not just `error_code`.
+- This is the first stage where `message_size` must be correct.
+- Request version is still read from header, and response correlation ID must still match request correlation ID.
+
+### Response shape in this stage
+
+```text
+message_size (4 bytes)
+response_header_v0:
+	correlation_id (4 bytes)
+response_body_v4:
+	error_code (2 bytes)
+	api_keys (compact array)
+	throttle_time_ms (4 bytes)
+	tag_buffer (1 byte when empty)
+```
+
+### Compact array intuition (important)
+
+- `api_keys` is a COMPACT_ARRAY.
+- Compact array length is encoded as: `actual_count + 1`.
+- If there is 1 API entry, length byte becomes `2` (`0x02`).
+
+```text
+api_keys length byte:
+	0x02  -> means 1 element
+```
+
+### Required API entry for this stage
+
+At least one API must be present:
+
+```text
+api_key     = 18   (ApiVersions)
+min_version = 0
+max_version = 4
+tag_buffer  = 0x00 (empty)
+```
+
+### Full byte-level layout (what your code is now building)
+
+```text
+[header]
+correlation_id: 4 bytes (copied from request)
+
+[body]
+error_code:       2 bytes
+api_keys_len:     1 byte   (0x02 -> one element)
+api_key:          2 bytes  (0x0012)
+min_version:      2 bytes  (0x0000)
+max_version:      2 bytes  (0x0004)
+api_tag_buffer:   1 byte   (0x00)
+throttle_time_ms: 4 bytes  (0x00000000)
+body_tag_buffer:  1 byte   (0x00)
+```
+
+### Message size calculation
+
+- `message_size` = size of response header + response body.
+- In this stage:
+
+```text
+header = 4 bytes (correlation_id)
+body   = 15 bytes
+total  = 19 bytes
+message_size = 0x00000013
+```
+
+### How current implementation maps to protocol
+
+- Read request version from bytes `data[6:8]` (big-endian INT16).
+- Read correlation ID from bytes `data[8:12]`.
+- Set `error_code = 0` for versions `<= 4`, else `35`.
+- Build body bytes in correct order:
+	`error_code -> api_keys compact array -> throttle_time_ms -> tag buffer`.
+- Build response as:
+	`correlation_id + body`.
+- Compute message size dynamically using `len(response)` and encode it as 4-byte big-endian.
+
+### Quick end-to-end picture
+
+```text
+Client request
+| size | api_key | api_version | correlation_id | ... |
+
+Broker logic
+1) read api_version
+2) read correlation_id
+3) build ApiVersions response body
+4) compute message_size correctly
+
+Broker response
+| message_size | correlation_id | error_code | api_keys | throttle | tags |
+```
+
+### Why this stage is important
+
+- This is where response encoding starts becoming strict.
+- A correct broker is not only about field values, but also exact byte lengths and ordering.
+- This stage teaches the core skill needed for all future Kafka APIs: encode schema fields in exact wire format.
