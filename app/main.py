@@ -50,8 +50,11 @@ def handle_client(conn):
             conn.sendall(size + response)
             
         elif api_key == 75:
-            topic_len = data[-4] - 1
-            topic_name = data[-3:]
+            
+            client_id_length = int.from_bytes(data[12:14], "big")
+            base = 14 + max(0, client_id_length) + 1 + 1
+            topic_len = data[base] - 1
+            topic_name = data[base + 1 : base + 1 + topic_len]
             
             header = correlation_id + b"\x00"
             
@@ -59,7 +62,8 @@ def handle_client(conn):
                 b"\x00\x00\x00\x00" +               # throttle_time_ms
                 b"\x02" +                           # 1 topic
                 b"\x00\x03" +                       # error_code = 3
-                (len(topic_name)+1).to_bytes(1, "big") + topic_name +
+                bytes([topic_len + 1]) +
+                topic_name +                        # topic name
                 b"\x00"*16 +                        # topic_id
                 b"\x00" +                           # is_internal
                 b"\x01" +                           # empty partitions
