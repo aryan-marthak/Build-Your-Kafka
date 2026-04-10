@@ -138,3 +138,44 @@ response_body:
 - You now parse a real request body field (`topic_name`) and reflect it in response.
 - Header version matters: using v1 means adding header tagged fields byte.
 - Kafka compatibility depends on exact binary shape, not just logical values.
+
+## Stage - DescribeTopicPartitions Existing Topic Response
+
+- This stage changes the broker from always saying "unknown topic" to looking up real topic metadata.
+- The topic information comes from the cluster metadata log file at `/tmp/kraft-combined-logs/__cluster_metadata-0/00000000000000000000.log`.
+- The broker must read that log, find the requested topic name, and use the stored UUID and partition data in the response.
+
+### What you need to extract from metadata
+
+- Topic name
+- Topic UUID
+- Partition IDs for that topic
+- Partition leader and replica information
+
+### Response differences for an existing topic
+
+- `error_code = 0`
+- `topic_id` is the actual UUID from metadata, not all zeros
+- `partitions` contains one partition entry for this stage
+- `next_cursor = -1` still means null
+
+### Partition entry shape
+
+For the single partition, the response should include:
+
+- `error_code = 0`
+- `partition_index` = the partition ID from metadata
+- `leader_id` = broker ID for that partition
+- `leader_epoch` = current leader epoch
+- `replica_nodes` = broker IDs that host replicas
+- `isr_nodes` = in-sync replica broker IDs
+- `eligible_leader_replicas` = usually empty here
+- `last_known_elr` = usually empty here
+- `offline_replicas` = usually empty here
+- `topic_authorized_operations = 0`
+
+### What this stage teaches
+
+- Kafka broker metadata is not invented at response time; it comes from the cluster state.
+- To answer DescribeTopicPartitions correctly, the broker must parse internal Kafka metadata records.
+- The response is now a real metadata lookup, not just a protocol placeholder.

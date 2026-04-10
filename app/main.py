@@ -79,16 +79,30 @@ def handle_client(conn):
             else:
                 error_code = 0
                 partitions = (
-                    b"\x02" +                      # 1 partition
-                    b"\x00\x00" +                 # partition error_code
-                    b"\x00\x00\x00\x00" +         # partition_index
+                    b"\x03" +                      # 2 partitions
+                
+                    # -------- Partition 0 --------
+                    b"\x00\x00" +                 # error_code
+                    b"\x00\x00\x00\x00" +         # partition_index = 0
                     b"\x00\x00\x00\x01" +         # leader_id
                     b"\x00\x00\x00\x00" +         # leader_epoch
                     b"\x02" + b"\x00\x00\x00\x01" +  # replica_nodes [1]
                     b"\x02" + b"\x00\x00\x00\x01" +  # isr_nodes [1]
-                    b"\x01" +                     # eligible_leader_replicas []
-                    b"\x01" +                     # last_known_elr []
-                    b"\x01" +                     # offline_replicas []
+                    b"\x01" +                     # eligible_leader_replicas
+                    b"\x01" +                     # last_known_elr
+                    b"\x01" +                     # offline_replicas
+                    b"\x00" +                     # tag buffer
+                
+                    # -------- Partition 1 --------
+                    b"\x00\x00" +                 # error_code
+                    b"\x00\x00\x00\x01" +         # partition_index = 1
+                    b"\x00\x00\x00\x01" +         # leader_id
+                    b"\x00\x00\x00\x00" +         # leader_epoch
+                    b"\x02" + b"\x00\x00\x00\x01" +  # replica_nodes [1]
+                    b"\x02" + b"\x00\x00\x00\x01" +  # isr_nodes [1]
+                    b"\x01" +                     # eligible_leader_replicas
+                    b"\x01" +                     # last_known_elr
+                    b"\x01" +                     # offline_replicas
                     b"\x00"                       # tag buffer
                 )
                 
