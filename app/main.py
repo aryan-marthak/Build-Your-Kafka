@@ -89,7 +89,7 @@ def handle_client(conn):
                     b"\x01" +
                     b"\x01" +
                     b"\x01" +
-                    b"\x00" +
+                    b"\x00"
                 )
                 
             header = correlation_id + b"\x00"
