@@ -105,7 +105,7 @@ def handle_client(conn):
                 partitions +
                 b"\x00\x00\x00\x00" +               # authorized ops
                 b"\x00" +                           # tag buffer
-                b"\xff" +                           # next_cursor
+                b"\x01" +                           # next_cursor
                 b"\x00"
             )
 
