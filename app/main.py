@@ -1,7 +1,23 @@
 import socket  # noqa: F401
 import threading
 
+LOG_DATA = "/tmp/kraft-combined-logs/__cluster_metadata-0/00000000000000000000.log"
 
+def load_log_data():
+    try:
+        with open(LOG_DATA, "rb") as f:
+            return f.read()
+    except FileNotFoundError:
+        return b""
+
+def get_topic_id(topic_name):
+    data = load_log_data()
+    idx = data.find(topic_name)
+    if idx == -1:
+        return None
+
+    return data[idx + len(topic_name) : idx + len(topic_name) + 16]
+    
 def main():
     print("Logs from your program will appear here!")
     server = socket.create_server(("localhost", 9092), reuse_port=True)
@@ -55,22 +71,42 @@ def handle_client(conn):
             base = 14 + max(0, client_id_length) + 1 + 1
             topic_len = data[base] - 1
             topic_name = data[base + 1 : base + 1 + topic_len]
-            
+            topic_id = get_topic_id(topic_name)
+            if topic_id is None:
+                error_code = 3
+                topic_id = b"\x00" * 16
+                partitions = b"\x01"  # empty partitions
+            else:
+                error_code = 0
+                partitions = (
+                    b"\x02" +
+                    b"\x00\x00" +
+                    b"\x00\x00\x00\x00" +
+                    b"\x00\x00\x00\x01" +
+                    b"\x00\x00\x00\x00" +
+                    b"\x02\x01" +
+                    b"\x02\x01" +
+                    b"\x01" +
+                    b"\x01" +
+                    b"\x01" +
+                    b"\x00" +
+                )
+                
             header = correlation_id + b"\x00"
             
             body = (
                 b"\x00\x00\x00\x00" +               # throttle_time_ms
                 b"\x02" +                           # 1 topic
-                b"\x00\x03" +                       # error_code = 3
+                error_code.to_bytes(2, "big") +
                 bytes([topic_len + 1]) +
-                topic_name +                        # topic name
-                b"\x00"*16 +                        # topic_id
+                topic_name +
+                topic_id +
                 b"\x00" +                           # is_internal
-                b"\x01" +                           # empty partitions
+                partitions +
                 b"\x00\x00\x00\x00" +               # authorized ops
                 b"\x00" +                           # tag buffer
-                b"\xff" +                           # next_cursor = -1
-                b"\x00"                             # tag buffer
+                b"\xff" +                           # next_cursor
+                b"\x00"
             )
 
             response = header + body

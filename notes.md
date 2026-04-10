@@ -71,3 +71,70 @@ tag_buffer = empty
 - ApiVersions is like the broker's capability list.
 - Adding an API here does not mean the API is implemented yet.
 - The tester checks that both entries are present and that the version ranges are correct.
+
+## Stage - DescribeTopicPartitions Unknown Topic Response
+
+- In this stage, the broker starts handling API key `75` (`DescribeTopicPartitions`) requests.
+- The tester sends one topic name, and the broker must parse that name from the request and echo it in the response.
+- For now, every requested topic should be treated as unknown.
+
+### Request fields you need for this stage
+
+- Request header still gives `correlation_id` (must be copied back).
+- Request body contains:
+	- `topics` as a compact array.
+	- each topic contains a compact string `topic_name`.
+
+### Header change in this stage
+
+- Previous stages used response header v0.
+- This stage uses response header v1:
+	- `correlation_id` (4 bytes)
+	- `TAG_BUFFER` (1 byte when empty, value `0x00`)
+
+### Response body requirements (DescribeTopicPartitions v0)
+
+For the single topic in request, return one topic result with:
+
+- `error_code = 3` (`UNKNOWN_TOPIC_OR_PARTITION`)
+- `topic_name =` same bytes as in request
+- `topic_id =` all-zero UUID (`16` zero bytes)
+- `is_internal = false`
+- `partitions =` empty compact array
+- `topic_authorized_operations = 0`
+- `next_cursor = -1` (null, encoded as `0xFF`)
+
+### Compact encoding reminders used here
+
+- Compact array length is stored as `actual_count + 1`.
+	- one topic => length byte `0x02`
+	- empty partitions => length byte `0x01`
+- Compact string length is also unsigned-varint with `actual_length + 1`.
+	- topic `foo` (3 bytes) => length byte `0x04`
+
+### Minimal response shape
+
+```text
+message_size
+response_header_v1:
+	correlation_id
+	tag_buffer
+response_body:
+	throttle_time_ms
+	topics[1]:
+		error_code = 3
+		topic_name (echo from request)
+		topic_id = 16 zero bytes
+		is_internal = false
+		partitions = empty
+		topic_authorized_operations = 0
+		tag_buffer
+	next_cursor = -1
+	tag_buffer
+```
+
+### What this stage teaches
+
+- You now parse a real request body field (`topic_name`) and reflect it in response.
+- Header version matters: using v1 means adding header tagged fields byte.
+- Kafka compatibility depends on exact binary shape, not just logical values.
