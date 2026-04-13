@@ -18,12 +18,12 @@ def get_partition_count(topic_name):
         if idx == -1:
             break
 
-        # read partition index (next 4 bytes)
-        if idx + 20 <= len(data):
-            p = int.from_bytes(data[idx + 16:idx + 20], "big")
+        window = data[idx:idx + 50]
 
-            # only accept small valid numbers
-            if p < 10:
+        for j in range(len(window) - 4):
+            p = int.from_bytes(window[j:j+4], "big")
+
+            if 0 <= p <= 10:
                 partitions.add(p)
 
         i = idx + 1
