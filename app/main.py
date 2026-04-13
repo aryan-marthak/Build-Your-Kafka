@@ -15,20 +15,18 @@ def get_topic_id(topic_name):
     idx = data.find(topic_name)
     if idx == -1:
         return None
-
     return data[idx + len(topic_name) : idx + len(topic_name) + 16]
-    
+
 def main():
     print("Logs from your program will appear here!")
     server = socket.create_server(("localhost", 9092), reuse_port=True)
     while True:
         conn, _ = server.accept()
         threading.Thread(target=handle_client, args=(conn,), daemon=True).start()
-    
+
 def handle_client(conn):
     while True:
         data = conn.recv(1024)
-
         if not data:
             break
         
@@ -42,7 +40,6 @@ def handle_client(conn):
             else:
                 error_code = 35
             error_bytes = error_code.to_bytes(2, "big")
-
             body = (
                 error_bytes +
                 b"\x03" +              # 2 api (compact array length)
@@ -50,19 +47,15 @@ def handle_client(conn):
                 b"\x00\x00" +          # min_version = 0
                 b"\x00\x04" +          # max_version = 4
                 b"\x00" +              # tag buffer
-
                 b"\x00\x4b" +          # new api_key = 75
                 b"\x00\x00" +          
                 b"\x00\x00" +
                 b"\x00" +              
-
                 b"\x00\x00\x00\x00" +  # throttle_time_ms
                 b"\x00"                # tag buffer
             )
-
             response = correlation_id + body
             size = len(response).to_bytes(4, "big")
-
             conn.sendall(size + response)
             
         elif api_key == 75:
@@ -81,7 +74,6 @@ def handle_client(conn):
                 partitions = (
                     b"\x03" +                      # 2 partitions
                 
-                    # -------- Partition 0 --------
                     b"\x00\x00" +                 # error_code
                     b"\x00\x00\x00\x00" +         # partition_index = 0
                     b"\x00\x00\x00\x01" +         # leader_id
@@ -93,7 +85,6 @@ def handle_client(conn):
                     b"\x01" +                     # offline_replicas
                     b"\x00" +                     # tag buffer
                 
-                    # -------- Partition 1 --------
                     b"\x00\x00" +                 # error_code
                     b"\x00\x00\x00\x01" +         # partition_index = 1
                     b"\x00\x00\x00\x01" +         # leader_id
@@ -122,10 +113,8 @@ def handle_client(conn):
                 b"\xff" +                           # next_cursor
                 b"\x00"
             )
-
             response = header + body
             size = len(response).to_bytes(4, "big")
             conn.sendall(size + response)
-
 if __name__ == "__main__":
     main()
