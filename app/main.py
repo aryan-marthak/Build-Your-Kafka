@@ -14,7 +14,7 @@ def get_partition_count(topic_name):
     i = 0
     
     while True:
-        idx = data.find(topic_name, i)
+        idx = data.find(topic_id, i)
         if idx == -1:
             break
         count += 1
