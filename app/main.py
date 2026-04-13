@@ -6,20 +6,47 @@ LOG_DATA = "/tmp/kraft-combined-logs/__cluster_metadata-0/00000000000000000000.l
 def get_partition_count(topic_name):
     data = load_log_data()
     topic_id = get_topic_id(topic_name)
-    
+
     if topic_id is None:
         return 0
-    
-    count = 0
+
+    partitions = set()
     i = 0
-    
+
     while True:
         idx = data.find(topic_id, i)
         if idx == -1:
             break
-        count += 1
+
+        # read partition index (next 4 bytes)
+        if idx + 20 <= len(data):
+            p = int.from_bytes(data[idx + 16:idx + 20], "big")
+
+            # only accept small valid numbers
+            if p < 10:
+                partitions.add(p)
+
         i = idx + 1
-    return max(1, count // 2)
+
+    return len(partitions) if partitions else 1
+
+# def get_partition_count(topic_name):
+#     data = load_log_data()
+#     topic_id = get_topic_id(topic_name)
+    
+#     if topic_id is None:
+#         return 0
+    
+#     count = 0
+#     i = 0
+    
+#     while True:
+#         idx = data.find(topic_id, i)
+#         if idx == -1:
+#             break
+#         count += 1
+#         i = idx + 1
+#     return max(1, count // 2)
 
 def load_log_data():
     try:
