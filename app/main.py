@@ -3,6 +3,18 @@ import threading
 
 LOG_DATA = "/tmp/kraft-combined-logs/__cluster_metadata-0/00000000000000000000.log"
 
+def get_partition_count(topic_name):
+    data = load_log_data()
+    count = 0
+    i = 0
+    while True:
+        idx = data.find(topic_name, i)
+        if idx == -1:
+            break
+        count += 1
+        i = idx + 1
+    return max(1, count)
+
 def load_log_data():
     try:
         with open(LOG_DATA, "rb") as f:
@@ -71,31 +83,23 @@ def handle_client(conn):
                 partitions = b"\x01"  # empty partitions
             else:
                 error_code = 0
-                partitions = (
-                    b"\x03" +                      # 2 partitions
                 
-                    b"\x00\x00" +                 # error_code
-                    b"\x00\x00\x00\x00" +         # partition_index = 0
-                    b"\x00\x00\x00\x01" +         # leader_id
-                    b"\x00\x00\x00\x00" +         # leader_epoch
-                    b"\x02" + b"\x00\x00\x00\x01" +  # replica_nodes [1]
-                    b"\x02" + b"\x00\x00\x00\x01" +  # isr_nodes [1]
-                    b"\x01" +                     # eligible_leader_replicas
-                    b"\x01" +                     # last_known_elr
-                    b"\x01" +                     # offline_replicas
-                    b"\x00" +                     # tag buffer
+                partitions_count = get_partition_count(topic_name)
+                partitions = bytes([partitions_count + 1])
                 
-                    b"\x00\x00" +                 # error_code
-                    b"\x00\x00\x00\x01" +         # partition_index = 1
-                    b"\x00\x00\x00\x01" +         # leader_id
-                    b"\x00\x00\x00\x00" +         # leader_epoch
-                    b"\x02" + b"\x00\x00\x00\x01" +  # replica_nodes [1]
-                    b"\x02" + b"\x00\x00\x00\x01" +  # isr_nodes [1]
-                    b"\x01" +                     # eligible_leader_replicas
-                    b"\x01" +                     # last_known_elr
-                    b"\x01" +                     # offline_replicas
-                    b"\x00"                       # tag buffer
-                )
+                for i in range(partitions_count):
+                    partitions += (
+                        b"\x00\x00" +                 # error_code
+                        i.to_bytes(4, "big") +        # partition_index
+                        b"\x00\x00\x00\x01" +         # leader_id
+                        b"\x00\x00\x00\x00" +         # leader_epoch
+                        b"\x02" + b"\x00\x00\x00\x01" +  # replica_nodes
+                        b"\x02" + b"\x00\x00\x00\x01" +  # isr_nodes
+                        b"\x01" +                     # eligible_leader_replicas
+                        b"\x01" +                     # last_known_elr
+                        b"\x01" +                     # offline_replicas
+                        b"\x00"
+                    )
                 
             header = correlation_id + b"\x00"
             
