@@ -5,8 +5,14 @@ LOG_DATA = "/tmp/kraft-combined-logs/__cluster_metadata-0/00000000000000000000.l
 
 def get_partition_count(topic_name):
     data = load_log_data()
+    topic_id = get_topic_id(topic_name)
+    
+    if topic_id is None:
+        return 0
+    
     count = 0
     i = 0
+    
     while True:
         idx = data.find(topic_name, i)
         if idx == -1:
