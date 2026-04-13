@@ -6,28 +6,22 @@ LOG_DATA = "/tmp/kraft-combined-logs/__cluster_metadata-0/00000000000000000000.l
 def get_partition_count(topic_name):
     data = load_log_data()
     topic_id = get_topic_id(topic_name)
-    
+ 
     if topic_id is None:
         return 0
-    
-    partition_indices = set()
+ 
+    # The topic UUID appears once in the topic record, then once per
+    # partition record. So total occurrences - 1 = partition count.
+    count = 0
     i = 0
-    
     while True:
         idx = data.find(topic_id, i)
         if idx == -1:
             break
-        # In KRaft partition records, the 4-byte partition index
-        # immediately follows the 16-byte topic UUID
-        partition_index_bytes = data[idx + 16 : idx + 20]
-        if len(partition_index_bytes) == 4:
-            partition_index = int.from_bytes(partition_index_bytes, "big")
-            # Sanity check: only accept plausible partition indices
-            if 0 <= partition_index < 10000:
-                partition_indices.add(partition_index)
+        count += 1
         i = idx + 1
-    
-    return len(partition_indices) if partition_indices else 1
+ 
+    return max(1, count - 1)
 
 # def get_partition_count(topic_name):
 #     data = load_log_data()
