@@ -19,7 +19,7 @@ def get_partition_count(topic_name):
             break
         count += 1
         i = idx + 1
-    return max(1, count)
+    return max(1, count // 2)
 
 def load_log_data():
     try:
