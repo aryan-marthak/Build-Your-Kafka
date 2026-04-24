@@ -83,7 +83,9 @@ def handle_client(conn):
         elif api_key == 75:
             
             client_id_length = int.from_bytes(data[12:14], "big")
-            base = 14 + max(0, client_id_length) + 1 + 1
+            base = 14 + client_id_length
+            
+            base += 1
             
             num_topics = data[base] - 1
             idx = base + 1
