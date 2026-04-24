@@ -130,6 +130,7 @@ def handle_client(conn):
                         )
 
                 topics_body += (
+                    b"\x00" +
                     error_code.to_bytes(2, "big") +
                     bytes([len(topic_name) + 1]) +
                     topic_name +
