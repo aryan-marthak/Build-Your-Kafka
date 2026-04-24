@@ -130,15 +130,22 @@ def handle_client(conn):
                         )
 
                 topics_body += (
-                    b"\x00" +
+                    b"\x00" +  # tag buffer (start)
+                
                     error_code.to_bytes(2, "big") +
+                
                     bytes([len(topic_name) + 1]) +
                     topic_name +
+                
                     topic_id +
-                    b"\x00" +
+                
+                    b"\x00" +  # is_internal = false
+                
                     partitions +
-                    b"\x00\x00\x00\x00" +
-                    b"\x00"
+                
+                    b"\x00\x00\x00\x00" +  # authorized_operations
+                
+                    b"\x00"  # tag buffer (end)
                 )
             
             topics_array = bytes([len(topics) + 1]) + topics_body
