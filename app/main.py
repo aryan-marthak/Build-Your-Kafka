@@ -83,9 +83,7 @@ def handle_client(conn):
         elif api_key == 75:
             
             client_id_length = int.from_bytes(data[12:14], "big")
-            base = 14 + client_id_length
-            
-            base += 1
+            base = 14 + client_id_length + 2
             
             num_topics = data[base] - 1
             idx = base + 1
@@ -131,20 +129,20 @@ def handle_client(conn):
 
                 topics_body += (
                     b"\x00" +  # tag buffer (start)
-                
+
                     error_code.to_bytes(2, "big") +
-                
+
                     bytes([len(topic_name) + 1]) +
                     topic_name +
-                
+
                     topic_id +
-                
+
                     b"\x00" +  # is_internal = false
-                
+
                     partitions +
-                
+
                     b"\x00\x00\x00\x00" +  # authorized_operations
-                
+
                     b"\x00"  # tag buffer (end)
                 )
             
