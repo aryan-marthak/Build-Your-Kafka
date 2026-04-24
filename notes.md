@@ -179,3 +179,50 @@ For the single partition, the response should include:
 - Kafka broker metadata is not invented at response time; it comes from the cluster state.
 - To answer DescribeTopicPartitions correctly, the broker must parse internal Kafka metadata records.
 - The response is now a real metadata lookup, not just a protocol placeholder.
+
+## Stage - DescribeTopicPartitions With Multiple Partitions
+
+- This stage extends the previous one: topic exists, but now it has multiple partitions.
+- The response still has one topic entry, but the `partitions` array now contains one full partition object per partition.
+- For the test case here, the topic has exactly 2 partitions, so the partitions array must contain exactly 2 entries.
+
+### Core rule for this stage
+
+- Do not merge partition info into one object.
+- Build one complete partition block per partition ID.
+- Each block has its own `partition_index` and its own `error_code`.
+
+### Response expectations
+
+- Topic-level `error_code = 0`
+- Topic name matches request
+- Topic UUID matches metadata log
+- Partitions array length encodes 2 elements (compact array length byte should be `3`)
+- Both partition entries have `error_code = 0`
+- `partition_index` values must match real metadata partition IDs
+- `next_cursor = -1` (null)
+
+### How your current implementation models this
+
+- It first resolves `topic_id` from the metadata log.
+- It estimates partition count by counting occurrences of the topic UUID in log bytes and subtracting one for the topic record itself.
+- It writes compact array length as `partitions_count + 1`.
+- It loops over partitions and appends one full partition structure per index.
+
+### Quick structure reminder
+
+```text
+topics[1]
+	topic metadata...
+	partitions[2]
+		partition #0 entry
+		partition #1 entry
+	topic_authorized_operations
+next_cursor = -1
+```
+
+### What this stage teaches
+
+- DescribeTopicPartitions is hierarchical: topic -> partitions.
+- Array cardinality and per-element correctness are both validated by the tester.
+- Correct protocol encoding now depends on dynamic content size, not fixed static response bytes.

@@ -1,3 +1,5 @@
+from email.mime import base
+from pydoc_data.topics import topics
 import socket  # noqa: F401
 import threading
 
@@ -22,24 +24,6 @@ def get_partition_count(topic_name):
         i = idx + 1
  
     return max(1, count - 1)
-
-# def get_partition_count(topic_name):
-#     data = load_log_data()
-#     topic_id = get_topic_id(topic_name)
-    
-#     if topic_id is None:
-#         return 0
-    
-#     count = 0
-#     i = 0
-    
-#     while True:
-#         idx = data.find(topic_id, i)
-#         if idx == -1:
-#             break
-#         count += 1
-#         i = idx + 1
-#     return max(1, count // 2)
 
 def load_log_data():
     try:
@@ -100,49 +84,71 @@ def handle_client(conn):
             
             client_id_length = int.from_bytes(data[12:14], "big")
             base = 14 + max(0, client_id_length) + 1 + 1
-            topic_len = data[base] - 1
-            topic_name = data[base + 1 : base + 1 + topic_len]
-            topic_id = get_topic_id(topic_name)
-            if topic_id is None:
-                error_code = 3
-                topic_id = b"\x00" * 16
-                partitions = b"\x01"  # empty partitions
-            else:
-                error_code = 0
-                
-                partitions_count = get_partition_count(topic_name)
-                partitions = bytes([partitions_count + 1])
-                
-                for i in range(partitions_count):
-                    partitions += (
-                        b"\x00\x00" +                 # error_code
-                        i.to_bytes(4, "big") +        # partition_index
-                        b"\x00\x00\x00\x01" +         # leader_id
-                        b"\x00\x00\x00\x00" +         # leader_epoch
-                        b"\x02" + b"\x00\x00\x00\x01" +  # replica_nodes
-                        b"\x02" + b"\x00\x00\x00\x01" +  # isr_nodes
-                        b"\x01" +                     # eligible_leader_replicas
-                        b"\x01" +                     # last_known_elr
-                        b"\x01" +                     # offline_replicas
-                        b"\x00"
-                    )
-                
+            
+            num_topics = data[base] - 1
+            idx = base + 1
+
+            topics = []
+
+            for _ in range(num_topics):
+                topic_len = data[idx] - 1
+                idx += 1
+                topic_name = data[idx: idx + topic_len]
+                idx += topic_len
+                topics.append(topic_name)            
+            
+            topics.sort()
+            
+            topics_body = b""
+
+            for topic_name in topics:
+                topic_id = get_topic_id(topic_name)
+
+                if topic_id is None:
+                    error_code = 3
+                    topic_id = b"\x00" * 16
+                    partitions = b"\x01"
+                else:
+                    error_code = 0
+                    partitions_count = get_partition_count(topic_name)
+                    partitions = bytes([partitions_count + 1])
+
+                    for i in range(partitions_count):
+                        partitions += (
+                            b"\x00\x00" +
+                            i.to_bytes(4, "big") +
+                            b"\x00\x00\x00\x01" +
+                            b"\x00\x00\x00\x00" +
+                            b"\x02" + b"\x00\x00\x00\x01" +
+                            b"\x02" + b"\x00\x00\x00\x01" +
+                            b"\x01" +
+                            b"\x01" +
+                            b"\x01" +
+                            b"\x00"
+                        )
+
+                topics_body += (
+                    error_code.to_bytes(2, "big") +
+                    bytes([len(topic_name) + 1]) +
+                    topic_name +
+                    topic_id +
+                    b"\x00" +
+                    partitions +
+                    b"\x00\x00\x00\x00" +
+                    b"\x00"
+                )
+            
+            topics_array = bytes([len(topics) + 1]) + topics_body
+            
             header = correlation_id + b"\x00"
             
             body = (
-                b"\x00\x00\x00\x00" +               # throttle_time_ms
-                b"\x02" +                           # 1 topic
-                error_code.to_bytes(2, "big") +
-                bytes([topic_len + 1]) +
-                topic_name +
-                topic_id +
-                b"\x00" +                           # is_internal
-                partitions +
-                b"\x00\x00\x00\x00" +               # authorized ops
-                b"\x00" +                           # tag buffer
-                b"\xff" +                           # next_cursor
-                b"\x00"
+                b"\x00\x00\x00\x00" +  # throttle_time_ms
+                topics_array +
+                b"\xff" +
+                b"\x00"  # tag buffer
             )
+            
             response = header + body
             size = len(response).to_bytes(4, "big")
             conn.sendall(size + response)
