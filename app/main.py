@@ -177,6 +177,7 @@ def handle_client(conn):
             body = (
                 b"\x00\x00\x00\x00" +
                 b"\x00\x00" + 
+                b"\x00\x00\x00\x00" +
                 b"\x01" +
                 b"\x00"
             )
