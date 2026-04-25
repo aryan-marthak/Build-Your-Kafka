@@ -83,19 +83,26 @@ def handle_client(conn):
         elif api_key == 75:
             
             client_id_length = int.from_bytes(data[12:14], "big")
-            base = 14 + client_id_length + 2
-            
+            base = 14 + client_id_length + 1            
             num_topics = data[base] - 1
             idx = base + 1
 
             topics = []
 
             for _ in range(num_topics):
+                if idx >= len(data):
+                    break  # prevent crash
+                
                 topic_len = data[idx] - 1
                 idx += 1
+
+                if idx + topic_len > len(data):
+                    break  # prevent crash
+                
                 topic_name = data[idx: idx + topic_len]
                 idx += topic_len
-                topics.append(topic_name)            
+
+                topics.append(topic_name)           
             
             topics.sort()
             
