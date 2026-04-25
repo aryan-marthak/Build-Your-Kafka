@@ -64,45 +64,48 @@ def handle_client(conn):
             error_bytes = error_code.to_bytes(2, "big")
             body = (
                 error_bytes +
-                b"\x03" +              # 2 api (compact array length)
-                b"\x00\x12" +          # api_key = 18
-                b"\x00\x00" +          # min_version = 0
-                b"\x00\x04" +          # max_version = 4
-                b"\x00" +              # tag buffer
-                b"\x00\x4b" +          # new api_key = 75
-                b"\x00\x00" +          
+                b"\x03" +
+                b"\x00\x12" +
                 b"\x00\x00" +
-                b"\x00" +              
-                b"\x00\x00\x00\x00" +  # throttle_time_ms
-                b"\x00"                # tag buffer
+                b"\x00\x04" +
+                b"\x00" +
+                b"\x00\x4b" +
+                b"\x00\x00" +
+                b"\x00\x00" +
+                b"\x00" +
+                b"\x00\x00\x00\x00" +
+                b"\x00"
             )
             response = correlation_id + body
             size = len(response).to_bytes(4, "big")
             conn.sendall(size + response)
             
         elif api_key == 75:
-            
-            client_id_length = int.from_bytes(data[12:14], "big")
+            # client_id is a nullable string: int16 (signed), -1 means null
+            client_id_length = int.from_bytes(data[12:14], "big", signed=True)
+            if client_id_length < 0:
+                client_id_length = 0
             base = 14 + client_id_length
-            base += 1
+            base += 1  # skip tag buffer byte
                         
-            num_topics = data[base] - 1
+            num_topics = data[base] - 1  # compact array: actual count = byte - 1
             idx = base + 1
 
             topics = []
 
             for _ in range(num_topics):
                 if idx >= len(data):
-                    break  # prevent crash
+                    break
                 
-                topic_len = data[idx] - 1
+                topic_len = data[idx] - 1  # compact string: actual len = byte - 1
                 idx += 1
 
                 if idx + topic_len > len(data):
-                    break  # prevent crash
+                    break
                 
                 topic_name = data[idx: idx + topic_len]
                 idx += topic_len
+                idx += 1  # skip per-topic tag buffer
 
                 topics.append(topic_name)           
             
@@ -137,36 +140,26 @@ def handle_client(conn):
                         )
 
                 topics_body += (
-                    b"\x00" +  # tag buffer (start)
-
                     error_code.to_bytes(2, "big") +
-
                     bytes([len(topic_name) + 1]) +
                     topic_name +
-
                     topic_id +
-
-                    b"\x00" +  # is_internal = false
-
+                    b"\x00" +          # is_internal
                     partitions +
-
                     b"\x00\x00\x00\x00" +  # authorized_operations
-
-                    b"\x00"  # tag buffer (end)
+                    b"\x00"            # tag buffer
                 )
             
             topics_array = bytes([len(topics) + 1]) + topics_body
             
-            header = correlation_id
-            
             body = (
                 b"\x00\x00\x00\x00" +  # throttle_time_ms
                 topics_array +
-                b"\xff" +
-                b"\x00"  # tag buffer
+                b"\xff" +              # next_cursor = null
+                b"\x00"               # tag buffer
             )
             
-            response = header + body
+            response = correlation_id + body
             size = len(response).to_bytes(4, "big")
             conn.sendall(size + response)
 if __name__ == "__main__":
