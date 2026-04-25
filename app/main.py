@@ -64,15 +64,23 @@ def handle_client(conn):
             error_bytes = error_code.to_bytes(2, "big")
             body = (
                 error_bytes +
-                b"\x03" +
+                b"\x04" +
+                
                 b"\x00\x12" +
                 b"\x00\x00" +
                 b"\x00\x04" +
                 b"\x00" +
+                
+                b"\x00\x01" +
+                b"\x00\x00" +
+                b"\x00\x10" +
+                b"\x00" +
+                
                 b"\x00\x4b" +
                 b"\x00\x00" +
                 b"\x00\x00" +
                 b"\x00" +
+                
                 b"\x00\x00\x00\x00" +
                 b"\x00"
             )
