@@ -170,5 +170,20 @@ def handle_client(conn):
             response = correlation_id + b"\x00" + body  # \x00 = response header tag buffer
             size = len(response).to_bytes(4, "big")
             conn.sendall(size + response)
+        
+        elif api_key == 1:
+            header = correlation_id + b"\x00"
+            
+            body = (
+                b"\x00\x00\x00\x00" +
+                b"\x00\x00" + 
+                b"\x01" +
+                b"\x00"
+            )
+            
+            response = header + body
+            size = len(response).to_bytes(4, "big")
+            conn.sendall(size + response)
+        
 if __name__ == "__main__":
     main()
