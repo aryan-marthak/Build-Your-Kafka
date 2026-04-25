@@ -157,7 +157,7 @@ def handle_client(conn):
             
             topics_array = bytes([len(topics) + 1]) + topics_body
             
-            header = correlation_id + b"\x00"
+            header = correlation_id
             
             body = (
                 b"\x00\x00\x00\x00" +  # throttle_time_ms
