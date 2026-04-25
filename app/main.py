@@ -159,7 +159,7 @@ def handle_client(conn):
                 b"\x00"               # tag buffer
             )
             
-            response = correlation_id + body
+            response = correlation_id + b"\x00" + body  # \x00 = response header tag buffer
             size = len(response).to_bytes(4, "big")
             conn.sendall(size + response)
 if __name__ == "__main__":
