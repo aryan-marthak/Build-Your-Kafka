@@ -188,8 +188,8 @@ def handle_client(conn):
             topic_id = data[idx: idx + 16]
             
             partition = (
-                b"\x00\x64" +                # error_code = 100
                 (0).to_bytes(4, "big") +    # partition_index = 0
+                b"\x00\x64" +                # error_code = 100
 
                 b"\x00\x00\x00\x00" +       # leader_id
                 b"\x00\x00\x00\x00" +       # leader_epoch
