@@ -195,10 +195,18 @@ def handle_client(conn):
                 )
             else:
                 topic_id = data[idx: idx + 16]
+                
+                log_data = load_log_data()
+                topic_known = topic_id in log_data
+                
+                if not topic_known:
+                    partition_error_code = b"\x00\x64"
+                else:
+                    partition_error_code = b"\x00\x00"
 
                 partition = (
                     (0).to_bytes(4, "big") +
-                    b"\x00\x00" +                                # error_code = 100
+                    partition_error_code +                                # error_code = 100
                     b"\x00\x00\x00\x00\x00\x00\x00\x00" +       # high_watermark
                     b"\x00\x00\x00\x00\x00\x00\x00\x00" +       # last_stable_offset
                     b"\x00\x00\x00\x00\x00\x00\x00\x00" +       # log_start_offset
