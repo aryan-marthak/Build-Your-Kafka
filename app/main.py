@@ -12,10 +12,18 @@ def get_topic_name_from_id(topic_id):
         idx = data.find(topic_id, i)
         if idx == -1:
             return None
+        # Try 2-byte big-endian length prefix (regular string)
         if idx >= 2:
             name_len = int.from_bytes(data[idx - 2:idx], "big")
             if 1 <= name_len <= 255 and idx - 2 - name_len >= 0:
                 name = data[idx - 2 - name_len: idx - 2]
+                if all(32 <= b <= 126 for b in name):
+                    return name
+        # Try 1-byte length prefix (compact string: stored as len+1)
+        if idx >= 1:
+            name_len = data[idx - 1] - 1  # compact string
+            if 1 <= name_len <= 255 and idx - 1 - name_len >= 0:
+                name = data[idx - 1 - name_len: idx - 1]
                 if all(32 <= b <= 126 for b in name):
                     return name
         i = idx + 1
