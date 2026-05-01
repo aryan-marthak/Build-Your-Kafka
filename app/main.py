@@ -230,6 +230,16 @@ def handle_client(conn):
                 )
             else:
                 topic_id = data[idx: idx + 16]
+                idx += 16
+                
+                # Parse partitions array
+                num_partitions = data[idx] - 1  # compact array
+                idx += 1
+                
+                # Parse first partition to get partition_index and fetch_offset
+                partition_index = int.from_bytes(data[idx: idx + 4], "big")
+                idx += 4
+                fetch_offset = int.from_bytes(data[idx: idx + 8], "big")
                 
                 log_data = load_log_data()
                 topic_known = topic_id in log_data
@@ -241,7 +251,7 @@ def handle_client(conn):
                     partition_error_code = b"\x00\x00"
                     topic_name = get_topic_name_from_id(topic_id)
                     if topic_name is not None:
-                        record_bytes = read_partition_log(topic_name)
+                        record_bytes = read_partition_log(topic_name, partition_index)
                     else:
                         record_bytes = b""
 
@@ -260,7 +270,7 @@ def handle_client(conn):
                     records_field = b"\x00"  # compact nullable bytes: null = 0  
 
                 partition = (
-                    (0).to_bytes(4, "big") +
+                    partition_index.to_bytes(4, "big") +
                     partition_error_code +
                     b"\x00\x00\x00\x00\x00\x00\x00\x00" +  # high_watermark
                     b"\x00\x00\x00\x00\x00\x00\x00\x00" +  # last_stable_offset
