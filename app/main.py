@@ -256,10 +256,10 @@ def handle_client(conn):
                         record_bytes = read_partition_log(topic_name, partition_index, 0)
 
                 if record_bytes:
-                    # compact bytes = varint(len + 1) + raw bytes
-                    records_field = encode_compact_size(len(record_bytes) + 1) + record_bytes
+                    # records = int32 length + raw bytes
+                    records_field = len(record_bytes).to_bytes(4, "big") + record_bytes
                 else:
-                    records_field = b"\x01"  # compact null
+                    records_field = b"\x00\x00\x00\x00"  # 0 length
 
                 partition = (
                     partition_index.to_bytes(4, "big") +
