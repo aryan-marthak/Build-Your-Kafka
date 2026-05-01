@@ -198,7 +198,7 @@ def handle_client(conn):
 
                 partition = (
                     (0).to_bytes(4, "big") +
-                    b"\x00\x64" +                                # error_code = 100
+                    b"\x00\x00" +                                # error_code = 100
                     b"\x00\x00\x00\x00\x00\x00\x00\x00" +       # high_watermark
                     b"\x00\x00\x00\x00\x00\x00\x00\x00" +       # last_stable_offset
                     b"\x00\x00\x00\x00\x00\x00\x00\x00" +       # log_start_offset
