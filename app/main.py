@@ -217,7 +217,6 @@ def handle_client(conn):
             
             num_topics = data[base] - 1  # compact array
             idx = base + 1
-            idx += 1  # skip tag buffer
 
             header = correlation_id + b"\x00"
 
