@@ -5,6 +5,15 @@ import threading
 
 LOG_DATA = "/tmp/kraft-combined-logs/__cluster_metadata-0/00000000000000000000.log"
 
+def encode_compact_size(n):
+    """Encode n as an unsigned varint (used for compact bytes/arrays)."""
+    out = b""
+    while n > 0x7F:
+        out += bytes([(n & 0x7F) | 0x80])
+        n >>= 7
+    out += bytes([n])
+    return out
+
 def get_topic_name_from_id(topic_id):
     data = load_log_data()
     i = 0
@@ -244,18 +253,13 @@ def handle_client(conn):
                     partition_error_code = b"\x00\x00"
                     topic_name = get_topic_name_from_id(topic_id)
                     if topic_name is not None:
-                        log_data = read_partition_log(topic_name, partition_index, 0)
-
-                        if len(log_data) >= 12:
-                            batch_len = int.from_bytes(log_data[8:12], "big")
-                            record_bytes = log_data[:12 + batch_len]   # ✅ only first batch
-                        else:
-                            record_bytes = b""
+                        record_bytes = read_partition_log(topic_name, partition_index, 0)
 
                 if record_bytes:
-                    records_field = record_bytes
+                    # compact bytes = varint(len + 1) + raw bytes
+                    records_field = encode_compact_size(len(record_bytes) + 1) + record_bytes
                 else:
-                    records_field = b"\x01"
+                    records_field = b"\x01"  # compact null
 
                 partition = (
                     partition_index.to_bytes(4, "big") +
