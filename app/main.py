@@ -248,8 +248,8 @@ def handle_client(conn):
                 if len(record_bytes) == 0:
                     records_field = b"\x01"
                 else:
-                    records_field = bytes([len(record_bytes) + 1]) + record_bytes
-                
+                    records_field = record_bytes  
+
                 partition = (
                     (0).to_bytes(4, "big") +
                     partition_error_code +
