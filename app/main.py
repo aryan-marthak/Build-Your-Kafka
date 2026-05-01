@@ -32,18 +32,6 @@ def read_partition_log(topic_name, partition = 0):
     except FileNotFoundError:
         return b""
 
-def encode_varint(n):
-    buf = b""
-    while True:
-        b = n & 0x7F
-        n >>= 7
-        if n:
-            buf += bytes([b | 0x80])
-        else:
-            buf += bytes([b])
-            break
-    return buf
-
 def get_partition_count(topic_name):
     data = load_log_data()
     topic_id = get_topic_id(topic_name)
@@ -249,10 +237,7 @@ def handle_client(conn):
                     else:
                         record_bytes = b""
 
-                if record_bytes:
-                    records_field = encode_varint(len(record_bytes) + 1) + record_bytes
-                else:
-                    records_field = b"\x01"  # compact bytes, length 0
+                records_field = record_bytes
 
                 partition = (
                     (0).to_bytes(4, "big") +
