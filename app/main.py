@@ -246,9 +246,18 @@ def handle_client(conn):
                         record_bytes = b""
 
                 if record_bytes:
-                    records_field = len(record_bytes).to_bytes(4, "big") + record_bytes
+                    n = len(record_bytes) + 1
+                    # encode n as unsigned varint
+                    varint = b""
+                    while True:
+                        b = n & 0x7F
+                        n >>= 7
+                        varint += bytes([b | 0x80]) if n else bytes([b])
+                        if not n:
+                            break
+                    records_field = varint + record_bytes
                 else:
-                    records_field = b"\xff\xff\xff\xff"  # null records = -1  
+                    records_field = b"\x00"  # compact nullable bytes: null = 0  
 
                 partition = (
                     (0).to_bytes(4, "big") +
