@@ -201,7 +201,7 @@ def handle_client(conn):
                 b"\x01" +                  # aborted_transactions (empty)
                 b"\x00\x00\x00\x00" +       # preferred_read_replica
 
-                b"\x01" +                  # records (empty)
+                b"\x00" +                  # records (empty)
 
                 b"\x00"                    # tag buffer
             )
@@ -220,15 +220,15 @@ def handle_client(conn):
 
             body = (
                 b"\x00\x00\x00\x00" +  # throttle_time_ms
-            
+
                 b"\x00\x00" +          # error_code
-            
+
                 b"\x00\x00\x00\x00" +  # session_id
-            
+
                 b"\x02" +              # responses array (1 topic)
-            
+
                 topic_block +
-            
+
                 b"\x00"                # tag buffer
             )
             
