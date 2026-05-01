@@ -172,14 +172,64 @@ def handle_client(conn):
             conn.sendall(size + response)
         
         elif api_key == 1:
+            client_id_length = int.from_bytes(data[12:14], "big", signed=True)
+            if client_id_length < 0:
+                client_id_length = 0
+            
+            base = 14 + client_id_length
+            
+            base += 1
+            
+            base += (4 + 4 + 4 + 4 + 1 + 4 + 4)
+            
+            num_topics = data[base] - 1
+            idx = base + 1
+            
+            topic_id = data[idx: idx + 16]
+            
+            partition = (
+                b"\x00\x64" +                # error_code = 100
+                (0).to_bytes(4, "big") +    # partition_index = 0
+
+                b"\x00\x00\x00\x00" +       # leader_id
+                b"\x00\x00\x00\x00" +       # leader_epoch
+
+                b"\x00\x00\x00\x00" +       # high_watermark
+                b"\x00\x00\x00\x00" +       # last_stable_offset
+                b"\x00\x00\x00\x00" +       # log_start_offset
+
+                b"\x01" +                  # aborted_transactions (empty)
+                b"\x00\x00\x00\x00" +       # preferred_read_replica
+
+                b"\x01" +                  # records (empty)
+
+                b"\x00"                    # tag buffer
+            )
+            
             header = correlation_id + b"\x00"
             
+            topic_block = (
+                topic_id +
+
+                b"\x02" +          # partitions array (1 element)
+
+                partition +
+
+                b"\x00"            # tag buffer
+            )
+
             body = (
-                b"\x00\x00\x00\x00" +
-                b"\x00\x00" + 
-                b"\x00\x00\x00\x00" +
-                b"\x01" +
-                b"\x00"
+                b"\x00\x00\x00\x00" +  # throttle_time_ms
+            
+                b"\x00\x00" +          # error_code
+            
+                b"\x00\x00\x00\x00" +  # session_id
+            
+                b"\x02" +              # responses array (1 topic)
+            
+                topic_block +
+            
+                b"\x00"                # tag buffer
             )
             
             response = header + body
