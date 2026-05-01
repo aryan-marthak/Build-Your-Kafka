@@ -241,12 +241,7 @@ def handle_client(conn):
                     partition_error_code = b"\x00\x00"
                     topic_name = get_topic_name_from_id(topic_id)
                     if topic_name is not None:
-                        log_data = read_partition_log(topic_name)
-                        if len(log_data) >= 12:
-                            batch_len = int.from_bytes(log_data[8:12], "big")
-                            record_bytes = log_data[12: 12 + batch_len]
-                        else:
-                            record_bytes = b""
+                        record_bytes = read_partition_log(topic_name)
                     else:
                         record_bytes = b""
 
