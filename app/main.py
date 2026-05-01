@@ -8,25 +8,15 @@ LOG_DATA = "/tmp/kraft-combined-logs/__cluster_metadata-0/00000000000000000000.l
 def get_topic_name_from_id(topic_id):
     data = load_log_data()
     i = 0
-    while True:
-        idx = data.find(topic_id, i)
-        if idx == -1:
-            return None
-        # Try 2-byte big-endian length prefix (regular string)
-        if idx >= 2:
-            name_len = int.from_bytes(data[idx - 2:idx], "big")
-            if 1 <= name_len <= 255 and idx - 2 - name_len >= 0:
-                name = data[idx - 2 - name_len: idx - 2]
-                if all(32 <= b <= 126 for b in name):
-                    return name
-        # Try 1-byte length prefix (compact string: stored as len+1)
-        if idx >= 1:
-            name_len = data[idx - 1] - 1  # compact string
-            if 1 <= name_len <= 255 and idx - 1 - name_len >= 0:
-                name = data[idx - 1 - name_len: idx - 1]
-                if all(32 <= b <= 126 for b in name):
-                    return name
-        i = idx + 1
+    while i < len(data) - 2:
+        # Read potential 2-byte name length
+        name_len = int.from_bytes(data[i:i+2], "big")
+        if 1 <= name_len <= 255 and i + 2 + name_len + 16 <= len(data):
+            name = data[i+2 : i+2+name_len]
+            uuid = data[i+2+name_len : i+2+name_len+16]
+            if all(32 <= b <= 126 for b in name) and uuid == topic_id:
+                return name
+        i += 1
     return None
 
 def read_partition_log(topic_name, partition = 0, offset = 0):
