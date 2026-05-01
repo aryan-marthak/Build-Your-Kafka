@@ -29,13 +29,14 @@ def get_topic_name_from_id(topic_id):
         i = idx + 1
     return None
 
-def read_partition_log(topic_name, partition = 0):
+def read_partition_log(topic_name, partition = 0, offset = 0):
     if isinstance(topic_name, bytes):
         topic_name = topic_name.decode("utf-8")
         
     path = f"/tmp/kraft-combined-logs/{topic_name}-{partition}/00000000000000000000.log"
     try:
         with open(path, "rb") as f:
+            f.seek(offset)
             return f.read()
     except FileNotFoundError:
         return b""
@@ -251,7 +252,7 @@ def handle_client(conn):
                     partition_error_code = b"\x00\x00"
                     topic_name = get_topic_name_from_id(topic_id)
                     if topic_name is not None:
-                        record_bytes = read_partition_log(topic_name, partition_index)
+                        record_bytes = read_partition_log(topic_name, partition_index, fetch_offset)
                     else:
                         record_bytes = b""
 
