@@ -213,10 +213,11 @@ def handle_client(conn):
             
             base = 14 + client_id_length
             base += 1  # skip tag buffer
-            base += (4 + 4 + 4 + 4 + 1 + 4 + 4)  # skip fetch-specific fields (replica_id, max_wait_time, min_bytes, max_bytes, isolation_level, session_id, session_epoch)
+            base += (4 + 4 + 4 + 1 + 4 + 4)  # skip fetch-specific fields
             
             num_topics = data[base] - 1  # compact array
             idx = base + 1
+            idx += 1  # skip tag buffer
 
             header = correlation_id + b"\x00"
 
