@@ -5,6 +5,45 @@ import threading
 
 LOG_DATA = "/tmp/kraft-combined-logs/__cluster_metadata-0/00000000000000000000.log"
 
+def get_topic_name_from_id(topic_id):
+    data = load_log_data()
+    i = 0
+    while True:
+        idx = data.find(topic_id, i)
+        if idx == -1:
+            return None
+        if idx >= 2:
+            name_len = int.from_bytes(data[idx - 2:idx], "big")
+            if 1 <= name_len <= 255 and idx - 2 - name_len >= 0:
+                name = data[idx - 2 - name_len: idx - 2]
+                if all(32 <= b <= 126 for b in name):
+                    return name
+        i = idx + 1
+    return None
+
+def read_partition_log(topic_name, partition = 0):
+    if isinstance(topic_name, bytes):
+        topic_name = topic_name.decode("utf-8")
+        
+    path = f"/tmp/kraft-combined-logs/{topic_name}-{partition}/00000000000000000000.log"
+    try:
+        with open(path, "rb") as f:
+            return f.read()
+    except FileNotFoundError:
+        return b""
+
+def encode_varint(n):
+    buf = b""
+    while True:
+        b = n & 0x7F
+        n >>= 7
+        if n:
+            buf += bytes([b | 0x80])
+        else:
+            buf += bytes([b])
+            break
+    return buf
+
 def get_partition_count(topic_name):
     data = load_log_data()
     topic_id = get_topic_id(topic_name)
@@ -201,19 +240,30 @@ def handle_client(conn):
                 
                 if not topic_known:
                     partition_error_code = b"\x00\x64"
+                    record_bytes = b""
                 else:
                     partition_error_code = b"\x00\x00"
+                    topic_name = get_topic_name_from_id(topic_id)
+                    if topic_name is not None:
+                        record_bytes = read_partition_log(topic_name)
+                    else:
+                        record_bytes = b""
+
+                if record_bytes:
+                    records_field = encode_varint(len(record_bytes) + 1) + record_bytes
+                else:
+                    records_field = b"\x01"  # compact bytes, length 0
 
                 partition = (
                     (0).to_bytes(4, "big") +
-                    partition_error_code +                                # error_code = 100
-                    b"\x00\x00\x00\x00\x00\x00\x00\x00" +       # high_watermark
-                    b"\x00\x00\x00\x00\x00\x00\x00\x00" +       # last_stable_offset
-                    b"\x00\x00\x00\x00\x00\x00\x00\x00" +       # log_start_offset
-                    b"\x01" +                                    # aborted_transactions (empty)
-                    b"\xff\xff\xff\xff" +                        # preferred_read_replica = -1
-                    b"\x01" +                                    # records (empty)
-                    b"\x00"                                      # tag buffer
+                    partition_error_code +
+                    b"\x00\x00\x00\x00\x00\x00\x00\x00" +  # high_watermark
+                    b"\x00\x00\x00\x00\x00\x00\x00\x00" +  # last_stable_offset
+                    b"\x00\x00\x00\x00\x00\x00\x00\x00" +  # log_start_offset
+                    b"\x01" +                               # aborted_transactions (empty)
+                    b"\xff\xff\xff\xff" +                   # preferred_read_replica = -1
+                    records_field +                         # <-- was hardcoded b"\x01"
+                    b"\x00"                                 # tag buffer
                 )
 
                 topic_block = (
