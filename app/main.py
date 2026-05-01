@@ -177,58 +177,53 @@ def handle_client(conn):
                 client_id_length = 0
             
             base = 14 + client_id_length
+            base += 1  # skip tag buffer
+            base += (4 + 4 + 4 + 1 + 4 + 4)  # skip fetch-specific fields
             
-            base += 1
-            
-            base += (4 + 4 + 4 + 1 + 4 + 4)
-            
-            num_topics = data[base] - 1
+            num_topics = data[base] - 1  # compact array
             idx = base + 1
-            
-            topic_id = data[idx: idx + 16]
-            
-            partition = (
-                (0).to_bytes(4, "big") +                    # partition_index = 0
-                b"\x00\x64" +                                # error_code = 100 (UNKNOWN_TOPIC_ID)
 
-                b"\x00\x00\x00\x00\x00\x00\x00\x00" +       # high_watermark (int64, 8 bytes)
-                b"\x00\x00\x00\x00\x00\x00\x00\x00" +       # last_stable_offset (int64, 8 bytes)
-                b"\x00\x00\x00\x00\x00\x00\x00\x00" +       # log_start_offset (int64, 8 bytes)
-
-                b"\x01" +                                    # aborted_transactions (compact null array = 0 elements)
-                b"\xff\xff\xff\xff" +                        # preferred_read_replica = -1 (no preference)
-
-                b"\x01" +                                    # records: compact nullable bytes, varint 1 = 0 bytes (empty)
-
-                b"\x00"                                      # tag buffer
-            )
-            
             header = correlation_id + b"\x00"
-            
-            topic_block = (
-                topic_id +
 
-                b"\x02" +          # partitions array (1 element)
+            if num_topics == 0:
+                body = (
+                    b"\x00\x00\x00\x00" +  # throttle_time_ms
+                    b"\x00\x00" +          # error_code
+                    b"\x00\x00\x00\x00" +  # session_id
+                    b"\x01" +              # responses: compact array length 0 (1 = empty)
+                    b"\x00"                # tag buffer
+                )
+            else:
+                topic_id = data[idx: idx + 16]
 
-                partition +
+                partition = (
+                    (0).to_bytes(4, "big") +
+                    b"\x00\x64" +                                # error_code = 100
+                    b"\x00\x00\x00\x00\x00\x00\x00\x00" +       # high_watermark
+                    b"\x00\x00\x00\x00\x00\x00\x00\x00" +       # last_stable_offset
+                    b"\x00\x00\x00\x00\x00\x00\x00\x00" +       # log_start_offset
+                    b"\x01" +                                    # aborted_transactions (empty)
+                    b"\xff\xff\xff\xff" +                        # preferred_read_replica = -1
+                    b"\x01" +                                    # records (empty)
+                    b"\x00"                                      # tag buffer
+                )
 
-                b"\x00"            # tag buffer
-            )
+                topic_block = (
+                    topic_id +
+                    b"\x02" +   # partitions compact array (1 element)
+                    partition +
+                    b"\x00"     # tag buffer
+                )
 
-            body = (
-                b"\x00\x00\x00\x00" +  # throttle_time_ms
+                body = (
+                    b"\x00\x00\x00\x00" +  # throttle_time_ms
+                    b"\x00\x00" +          # error_code
+                    b"\x00\x00\x00\x00" +  # session_id
+                    b"\x02" +              # responses compact array (1 topic)
+                    topic_block +
+                    b"\x00"                # tag buffer
+                )
 
-                b"\x00\x00" +          # error_code
-
-                b"\x00\x00\x00\x00" +  # session_id
-
-                b"\x02" +              # responses array (1 topic)
-
-                topic_block +
-
-                b"\x00"                # tag buffer
-            )
-            
             response = header + body
             size = len(response).to_bytes(4, "big")
             conn.sendall(size + response)
