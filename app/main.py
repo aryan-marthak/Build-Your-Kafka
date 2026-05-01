@@ -245,10 +245,10 @@ def handle_client(conn):
                     else:
                         record_bytes = b""
 
-                if len(record_bytes) == 0:
-                    records_field = b"\x01"
+                if record_bytes:
+                    records_field = len(record_bytes).to_bytes(4, "big") + record_bytes
                 else:
-                    records_field = record_bytes  
+                    records_field = b"\xff\xff\xff\xff"  # null records = -1  
 
                 partition = (
                     (0).to_bytes(4, "big") +
