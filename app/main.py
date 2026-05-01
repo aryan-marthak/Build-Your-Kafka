@@ -188,22 +188,19 @@ def handle_client(conn):
             topic_id = data[idx: idx + 16]
             
             partition = (
-                (0).to_bytes(4, "big") +    # partition_index = 0
-                b"\x00\x64" +                # error_code = 100
-
-                b"\x00\x00\x00\x00" +       # leader_id
-                b"\x00\x00\x00\x00" +       # leader_epoch
-
-                b"\x00\x00\x00\x00" +       # high_watermark
-                b"\x00\x00\x00\x00" +       # last_stable_offset
-                b"\x00\x00\x00\x00" +       # log_start_offset
-
-                b"\x01" +                  # aborted_transactions (empty)
-                b"\x00\x00\x00\x00" +       # preferred_read_replica
-
-                b"\x00" +                  # records (empty)
-
-                b"\x00"                    # tag buffer
+                (0).to_bytes(4, "big") +                    # partition_index = 0
+                b"\x00\x64" +                                # error_code = 100 (UNKNOWN_TOPIC_ID)
+            
+                b"\x00\x00\x00\x00\x00\x00\x00\x00" +       # high_watermark (int64, 8 bytes)
+                b"\x00\x00\x00\x00\x00\x00\x00\x00" +       # last_stable_offset (int64, 8 bytes)
+                b"\x00\x00\x00\x00\x00\x00\x00\x00" +       # log_start_offset (int64, 8 bytes)
+            
+                b"\x01" +                                    # aborted_transactions (compact null array = 0 elements)
+                b"\xff\xff\xff\xff" +                        # preferred_read_replica = -1 (no preference)
+            
+                b"\x01" +                                    # records: compact nullable bytes, varint 1 = 0 bytes (empty)
+            
+                b"\x00"                                      # tag buffer
             )
             
             header = correlation_id + b"\x00"
