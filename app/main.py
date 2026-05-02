@@ -124,13 +124,14 @@ def parse_cluster_metadata():
                             topic_id_partitions[topic_uuid] = 0
                     
                     elif record_type == 3:  # PartitionRecord
-                        # Fields: partition_id(int32) + topic_id(UUID) + ...
-                        # partition_id is a zigzag varint in some versions
-                        partition_id, vpos = decode_signed_varint(value_data, vpos)
-                        if vpos + 16 <= len(value_data):
+                        # Fields: partition_id(int32, 4 bytes) + topic_id(UUID, 16 bytes) + ...
+                        if vpos + 4 + 16 <= len(value_data):
+                            partition_id = struct.unpack_from(">i", value_data, vpos)[0]
+                            vpos += 4
                             topic_uuid = value_data[vpos:vpos + 16]
                             if topic_uuid in topic_id_partitions:
                                 topic_id_partitions[topic_uuid] += 1
+                                print(f"DEBUG: Found PartitionRecord: partition_id={partition_id}, topic_uuid={topic_uuid.hex()}, count={topic_id_partitions[topic_uuid]}", flush=True)
             else:
                 if value_length == 0:
                     pass  # empty value
