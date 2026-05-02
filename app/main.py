@@ -176,7 +176,9 @@ def handle_client(conn):
             # Validate topic and partition using metadata
             topic_id = get_topic_id(topic_name)
 
-            if topic_id is None:
+            log_data = load_log_data()
+
+            if topic_name not in log_data:
                 error_code = 3
                 base_offset = -1
                 log_start_offset = -1
