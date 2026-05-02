@@ -16,23 +16,25 @@ def encode_compact_size(n):
 
 def get_topic_name_from_id(topic_id):
     data = load_log_data()
-    idx = data.find(topic_id)
-    if idx == -1:
-        return None
-    # The name is stored immediately before the UUID with a 2-byte big-endian length prefix
-    # Scan back to find printable ASCII string ending right at idx
-    for name_len in range(1, 256):
-        if idx - name_len < 0:
-            break
-        candidate = data[idx - name_len : idx]
-        if all(32 <= b <= 126 for b in candidate):
-            # Check 2-byte length prefix before the name
-            prefix_pos = idx - name_len - 2
-            if prefix_pos >= 0:
-                prefix_val = int.from_bytes(data[prefix_pos:prefix_pos+2], "big")
-                if prefix_val == name_len:
-                    return candidate
-    return None
+    search_start = 0
+    while True:
+        idx = data.find(topic_id, search_start)
+        if idx == -1:
+            return None
+        # TopicRecord value layout: \x00\x02\x00 + varint(len+1) + name + UUID
+        # Check all possible name lengths at this UUID position
+        for name_len in range(1, 128):
+            name_start = idx - name_len
+            varint_pos = name_start - 1
+            header_pos = varint_pos - 3
+            if header_pos < 0:
+                continue
+            if (data[varint_pos] == name_len + 1 and
+                data[header_pos:varint_pos] == b'\x00\x02\x00'):
+                name = data[name_start:idx]
+                if all(32 <= b <= 126 for b in name):
+                    return name
+        search_start = idx + 1
 
 def read_partition_log(topic_name, partition=0, offset=0):
     if isinstance(topic_name, bytes):
