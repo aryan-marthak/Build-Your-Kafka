@@ -23,11 +23,18 @@ def load_log_data():
 
 
 def get_topic_id(topic_name):
+    if isinstance(topic_name, str):
+        topic_name = topic_name.encode()
     data = load_log_data()
-    idx = data.find(topic_name)
+    # Search for the TopicRecord signature: \x00\x02\x00 + compact_string(name) + UUID
+    pattern = b'\x00\x02\x00' + bytes([len(topic_name) + 1]) + topic_name
+    idx = data.find(pattern)
     if idx == -1:
         return None
-    return data[idx + len(topic_name): idx + len(topic_name) + 16]
+    uuid_start = idx + len(pattern)
+    if uuid_start + 16 > len(data):
+        return None
+    return data[uuid_start:uuid_start + 16]
 
 
 def get_topic_name_from_id(topic_id):
@@ -134,32 +141,32 @@ def handle_client(conn):
             if client_id_len > 0:
                 idx += client_id_len
             idx += 1  # tag buffer
-        
+
             # transactional_id: compact nullable string
             txn_id_len = data[idx] - 1
             idx += 1
             if txn_id_len > 0:
                 idx += txn_id_len
-        
+
             idx += 2  # acks
             idx += 4  # timeout_ms
-        
+
             num_topics = data[idx] - 1
             idx += 1
-        
+
             topic_name_len = data[idx] - 1
             idx += 1
             topic_name = data[idx:idx+topic_name_len]
             idx += topic_name_len
-        
+
             num_partitions = data[idx] - 1
             idx += 1
-        
+
             partition_index = int.from_bytes(data[idx:idx+4], "big")
-        
+
             # Validate topic and partition using metadata
             topic_id = get_topic_id(topic_name)
-            
+
             if topic_id is None:
                 # Unknown topic
                 error_code = 3
@@ -176,9 +183,9 @@ def handle_client(conn):
                     error_code = 0
                     base_offset = 0
                     log_start_offset = 0
-        
+
             log_append_time = -1
-        
+
             partition_response = (
                 partition_index.to_bytes(4, "big") +
                 error_code.to_bytes(2, "big") +
@@ -189,21 +196,21 @@ def handle_client(conn):
                 b"\x01" +   # error_message: null compact string
                 b"\x00"     # tag buffer
             )
-        
+
             topic_response = (
                 bytes([len(topic_name) + 1]) + topic_name +
                 b"\x02" +
                 partition_response +
                 b"\x00"
             )
-        
+
             body = (
                 b"\x02" +
                 topic_response +
                 b"\x00\x00\x00\x00" +   # throttle_time_ms
                 b"\x00"
             )
-        
+
             response = correlation_id + b"\x00" + body
             conn.sendall(len(response).to_bytes(4, "big") + response)
 
