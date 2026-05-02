@@ -1,10 +1,9 @@
-import struct
-import socket
+from email.mime import base
+from pydoc_data.topics import topics
+import socket  # noqa: F401
 import threading
-import os
 
 LOG_DATA = "/tmp/kraft-combined-logs/__cluster_metadata-0/00000000000000000000.log"
-
 
 def encode_compact_size(n):
     """Encode n as an unsigned varint (used for compact bytes/arrays)."""
@@ -15,152 +14,38 @@ def encode_compact_size(n):
     out += bytes([n])
     return out
 
-
-def decode_unsigned_varint(data, offset):
-    """Decode an unsigned varint from data at offset. Returns (value, new_offset)."""
-    result = 0
-    shift = 0
+def get_topic_name_from_id(topic_id):
+    data = load_log_data()
+    search_start = 0
     while True:
-        b = data[offset]
-        result |= (b & 0x7F) << shift
-        offset += 1
-        if (b & 0x80) == 0:
-            break
-        shift += 7
-    return result, offset
+        idx = data.find(topic_id, search_start)
+        if idx == -1:
+            return None
+        # TopicRecord value layout: frame_version(1) + type(1)=0x02 + version(1) + varint(len+1) + name + UUID
+        # Check all possible name lengths at this UUID position
+        for name_len in range(1, 128):
+            name_start = idx - name_len
+            varint_pos = name_start - 1
+            header_pos = varint_pos - 3
+            if header_pos < 0:
+                continue
+            if (data[varint_pos] == name_len + 1 and
+                data[header_pos + 1] == 0x02 and   # type byte = TopicRecord
+                data[header_pos + 2] == 0x00):      # version = 0
+                name = data[name_start:idx]
+                if all(32 <= b <= 126 for b in name):
+                    return name
+        search_start = idx + 1
 
-
-def decode_signed_varint(data, offset):
-    """Decode a zigzag-encoded signed varint. Returns (value, new_offset)."""
-    uval, offset = decode_unsigned_varint(data, offset)
-    # Zigzag decode
-    val = (uval >> 1) ^ -(uval & 1)
-    return val, offset
-
-
-def parse_cluster_metadata():
-    """Parse the cluster metadata log and return mappings of topic_id -> topic_name."""
-    topic_id_to_name = {}
-    topic_name_to_id = {}
-    topic_id_partitions = {}  # topic_id -> count of partition records
-
-    try:
-        with open(LOG_DATA, "rb") as f:
-            data = f.read()
-    except FileNotFoundError:
-        return topic_id_to_name, topic_name_to_id, topic_id_partitions
-
-    pos = 0
-    while pos + 12 <= len(data):
-        # Record batch header
-        base_offset = struct.unpack_from(">q", data, pos)[0]
-        batch_length = struct.unpack_from(">i", data, pos + 8)[0]
-        
-        if batch_length <= 0 or pos + 12 + batch_length > len(data):
-            break
-        
-        batch_end = pos + 12 + batch_length
-        
-        # Skip rest of batch header:
-        # partition_leader_epoch(4) + magic(1) + crc(4) + attributes(2) +
-        # last_offset_delta(4) + base_timestamp(8) + max_timestamp(8) +
-        # producer_id(8) + producer_epoch(2) + base_sequence(4) +
-        # num_records(4)
-        header_size = 12 + 4 + 1 + 4 + 2 + 4 + 8 + 8 + 8 + 2 + 4 + 4
-        
-        if header_size > len(data):
-            break
-        
-        num_records = struct.unpack_from(">i", data, pos + header_size - 4)[0]
-        rec_pos = pos + header_size
-        
-        for _ in range(num_records):
-            if rec_pos >= batch_end:
-                break
-            
-            # Record: length(varint) + attributes(1) + timestamp_delta(varint) +
-            #          offset_delta(varint) + key_length(varint) + key + 
-            #          value_length(varint) + value + headers_count(varint)
-            record_length, rec_pos = decode_signed_varint(data, rec_pos)
-            record_start = rec_pos
-            
-            _attributes = data[rec_pos]
-            rec_pos += 1
-            
-            _timestamp_delta, rec_pos = decode_signed_varint(data, rec_pos)
-            _offset_delta, rec_pos = decode_signed_varint(data, rec_pos)
-            
-            # Key
-            key_length, rec_pos = decode_signed_varint(data, rec_pos)
-            if key_length > 0:
-                rec_pos += key_length
-            
-            # Value
-            value_length, rec_pos = decode_signed_varint(data, rec_pos)
-            if value_length > 0:
-                value_data = data[rec_pos:rec_pos + value_length]
-                rec_pos += value_length
-                
-                # Parse the value to determine record type
-                # Value format: frame_version(1) + type(1) + version(1) + fields...
-                if len(value_data) >= 3:
-                    frame_version = value_data[0]
-                    record_type = value_data[1]
-                    record_version = value_data[2]
-                    
-                    vpos = 3
-                    
-                    if record_type == 2:  # TopicRecord
-                        # Fields: name(compact_string) + topic_id(UUID, 16 bytes)
-                        name_len, vpos = decode_unsigned_varint(value_data, vpos)
-                        name_len -= 1  # compact string: stored as len+1
-                        if name_len > 0 and vpos + name_len + 16 <= len(value_data):
-                            topic_name = value_data[vpos:vpos + name_len]
-                            vpos += name_len
-                            topic_uuid = value_data[vpos:vpos + 16]
-                            
-                            topic_id_to_name[topic_uuid] = topic_name
-                            topic_name_to_id[topic_name] = topic_uuid
-                            topic_id_partitions[topic_uuid] = 0
-                    
-                    elif record_type == 3:  # PartitionRecord
-                        # Fields: partition_id(int32, 4 bytes) + topic_id(UUID, 16 bytes) + ...
-                        if vpos + 4 + 16 <= len(value_data):
-                            partition_id = struct.unpack_from(">i", value_data, vpos)[0]
-                            vpos += 4
-                            topic_uuid = value_data[vpos:vpos + 16]
-                            if topic_uuid in topic_id_partitions:
-                                topic_id_partitions[topic_uuid] += 1
-                                print(f"DEBUG: Found PartitionRecord: partition_id={partition_id}, topic_uuid={topic_uuid.hex()}, count={topic_id_partitions[topic_uuid]}", flush=True)
-            else:
-                if value_length == 0:
-                    pass  # empty value
-            
-            # Headers count
-            headers_count, _ = decode_unsigned_varint(data, rec_pos)
-            
-            # Jump to end of record
-            rec_pos = record_start + record_length
-        
-        pos = batch_end
-    
-    return topic_id_to_name, topic_name_to_id, topic_id_partitions
-
-
-def read_partition_log(topic_name, partition=0):
+def read_partition_log(topic_name, partition=0, offset=0):
     if isinstance(topic_name, bytes):
         topic_name = topic_name.decode("utf-8")
     path = f"/tmp/kraft-combined-logs/{topic_name}-{partition}/00000000000000000000.log"
-    print(f"DEBUG: Reading partition log from: {path}", flush=True)
     try:
         with open(path, "rb") as f:
-            data = f.read()
-            print(f"DEBUG: Read {len(data)} bytes from partition log", flush=True)
-            return data
+            return f.read()
     except FileNotFoundError:
-        print(f"DEBUG: File not found: {path}", flush=True)
         return b""
-
 
 def load_log_data():
     try:
@@ -169,6 +54,46 @@ def load_log_data():
     except FileNotFoundError:
         return b""
 
+def get_partition_count(topic_name):
+    data = load_log_data()
+    topic_id = get_topic_id(topic_name)
+ 
+    if topic_id is None:
+        return 0
+ 
+    # The topic UUID appears once in the topic record, then once per
+    # partition record. So total occurrences - 1 = partition count.
+    count = 0
+    i = 0
+    while True:
+        idx = data.find(topic_id, i)
+        if idx == -1:
+            break
+        count += 1
+        i = idx + 1
+ 
+    return max(1, count - 1)
+
+def load_log_data():
+    try:
+        with open(LOG_DATA, "rb") as f:
+            return f.read()
+    except FileNotFoundError:
+        return b""
+
+def get_topic_id(topic_name):
+    data = load_log_data()
+    idx = data.find(topic_name)
+    if idx == -1:
+        return None
+    return data[idx + len(topic_name) : idx + len(topic_name) + 16]
+
+def main():
+    print("Logs from your program will appear here!")
+    server = socket.create_server(("localhost", 9092), reuse_port=True)
+    while True:
+        conn, _ = server.accept()
+        threading.Thread(target=handle_client, args=(conn,), daemon=True).start()
 
 def recv_exact(conn, n):
     """Read exactly n bytes from the connection."""
@@ -179,15 +104,6 @@ def recv_exact(conn, n):
             return None
         buf += chunk
     return buf
-
-
-def main():
-    print("Logs from your program will appear here!")
-    server = socket.create_server(("localhost", 9092), reuse_port=True)
-    while True:
-        conn, _ = server.accept()
-        threading.Thread(target=handle_client, args=(conn,), daemon=True).start()
-
 
 def handle_client(conn):
     while True:
@@ -217,19 +133,25 @@ def handle_client(conn):
             error_bytes = error_code.to_bytes(2, "big")
             body = (
                 error_bytes +
-                b"\x04" +
+                b"\x05" +          # 4 entries (compact array: count+1 = 5)
                 
-                b"\x00\x12" +
+                # Produce (API key 0)
+                b"\x00\x00" +      # api_key = 0
+                b"\x00\x00" +      # min_version = 0
+                b"\x00\x0b" +      # max_version = 11
+                b"\x00" +
+                
+                b"\x00\x12" +      # ApiVersions (18)
                 b"\x00\x00" +
                 b"\x00\x04" +
                 b"\x00" +
                 
-                b"\x00\x01" +
+                b"\x00\x01" +      # Fetch (1)
                 b"\x00\x00" +
                 b"\x00\x10" +
                 b"\x00" +
                 
-                b"\x00\x4b" +
+                b"\x00\x4b" +      # DescribeTopicPartitions (75)
                 b"\x00\x00" +
                 b"\x00\x00" +
                 b"\x00" +
@@ -252,7 +174,7 @@ def handle_client(conn):
             num_topics = data[base] - 1  # compact array: actual count = byte - 1
             idx = base + 1
 
-            topics_list = []
+            topics = []
 
             for _ in range(num_topics):
                 if idx >= len(data):
@@ -268,17 +190,14 @@ def handle_client(conn):
                 idx += topic_len
                 idx += 1  # skip per-topic tag buffer
 
-                topics_list.append(topic_name)           
+                topics.append(topic_name)           
             
-            topics_list.sort()
-            
-            # Parse metadata
-            id_to_name, name_to_id, id_partitions = parse_cluster_metadata()
+            topics.sort()
             
             topics_body = b""
 
-            for topic_name in topics_list:
-                topic_id = name_to_id.get(topic_name)
+            for topic_name in topics:
+                topic_id = get_topic_id(topic_name)
 
                 if topic_id is None:
                     error_code = 3
@@ -286,7 +205,7 @@ def handle_client(conn):
                     partitions = b"\x01"
                 else:
                     error_code = 0
-                    partitions_count = id_partitions.get(topic_id, 1)
+                    partitions_count = get_partition_count(topic_name)
                     partitions = bytes([partitions_count + 1])
 
                     for i in range(partitions_count):
@@ -314,7 +233,7 @@ def handle_client(conn):
                     b"\x00"            # tag buffer
                 )
             
-            topics_array = bytes([len(topics_list) + 1]) + topics_body
+            topics_array = bytes([len(topics) + 1]) + topics_body
             
             body = (
                 b"\x00\x00\x00\x00" +  # throttle_time_ms
@@ -357,21 +276,13 @@ def handle_client(conn):
                 num_partitions = data[idx] - 1  # compact array
                 idx += 1
                 
-                # Parse first partition
+                # Parse first partition to get partition_index and fetch_offset
                 partition_index = int.from_bytes(data[idx: idx + 4], "big")
                 idx += 4
-                # current_leader_epoch (4 bytes)
-                idx += 4
-                # fetch_offset (8 bytes)
                 fetch_offset = int.from_bytes(data[idx: idx + 8], "big")
-                idx += 8
                 
-                # Parse metadata to find topic name
-                id_to_name, name_to_id, id_partitions = parse_cluster_metadata()
-                topic_known = topic_id in id_to_name
-                
-                print(f"DEBUG: topic_id hex: {topic_id.hex()}", flush=True)
-                print(f"DEBUG: topic_known: {topic_known}", flush=True)
+                log_data = load_log_data()
+                topic_known = topic_id in log_data
                 
                 record_bytes = b""
                 
@@ -380,15 +291,14 @@ def handle_client(conn):
                     record_bytes = b""
                 else:
                     partition_error_code = b"\x00\x00"
-                    topic_name = id_to_name[topic_id]
-                    print(f"DEBUG: topic_name: {topic_name}", flush=True)
-                    record_bytes = read_partition_log(topic_name, partition_index)
+                    topic_name = get_topic_name_from_id(topic_id)
+                    if topic_name is not None:
+                        record_bytes = read_partition_log(topic_name, partition_index, 0)
 
                 if record_bytes:
                     records_field = encode_compact_size(len(record_bytes) + 1) + record_bytes
-                    print(f"DEBUG: record_bytes len: {len(record_bytes)}, records_field len: {len(records_field)}", flush=True)
                 else:
-                    records_field = b"\x01"  # compact nullable bytes: 1 = empty (0 bytes), 0 = null
+                    records_field = b"\x01"  # compact nullable: 1 = empty (0 bytes)
 
                 partition = (
                     partition_index.to_bytes(4, "big") +
@@ -396,7 +306,7 @@ def handle_client(conn):
                     b"\x00\x00\x00\x00\x00\x00\x00\x00" +  # high_watermark
                     b"\x00\x00\x00\x00\x00\x00\x00\x00" +  # last_stable_offset
                     b"\x00\x00\x00\x00\x00\x00\x00\x00" +  # log_start_offset
-                    b"\x01" +                               # aborted_transactions (empty compact array)
+                    b"\x01" +                               # aborted_transactions (empty)
                     b"\xff\xff\xff\xff" +                   # preferred_read_replica = -1
                     records_field +
                     b"\x00"                                 # tag buffer
@@ -422,6 +332,5 @@ def handle_client(conn):
             size = len(response).to_bytes(4, "big")
             conn.sendall(size + response)
         
-
 if __name__ == "__main__":
     main()
