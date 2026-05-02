@@ -129,64 +129,81 @@ def handle_client(conn):
 
         elif api_key == 0:  # Produce
             idx = 12
-            # client_id: int16 length + bytes
             client_id_len = int.from_bytes(data[idx:idx+2], "big", signed=True)
             idx += 2
             if client_id_len > 0:
                 idx += client_id_len
             idx += 1  # tag buffer
-
+        
             # transactional_id: compact nullable string
             txn_id_len = data[idx] - 1
             idx += 1
             if txn_id_len > 0:
                 idx += txn_id_len
-
-            idx += 2  # acks (int16)
-            idx += 4  # timeout_ms (int32)
-
-            # topic_data compact array
+        
+            idx += 2  # acks
+            idx += 4  # timeout_ms
+        
             num_topics = data[idx] - 1
             idx += 1
-
-            # first topic name
+        
             topic_name_len = data[idx] - 1
             idx += 1
             topic_name = data[idx:idx+topic_name_len]
             idx += topic_name_len
-
-            # partition_data compact array
+        
             num_partitions = data[idx] - 1
             idx += 1
-
-            # first partition index
+        
             partition_index = int.from_bytes(data[idx:idx+4], "big")
-
+        
+            # Validate topic and partition using metadata
+            topic_id = get_topic_id(topic_name)
+            
+            if topic_id is None:
+                # Unknown topic
+                error_code = 3
+                base_offset = -1
+                log_start_offset = -1
+            else:
+                # Check partition exists
+                partition_count = get_partition_count(topic_name)
+                if partition_index >= partition_count:
+                    error_code = 3
+                    base_offset = -1
+                    log_start_offset = -1
+                else:
+                    error_code = 0
+                    base_offset = 0
+                    log_start_offset = 0
+        
+            log_append_time = -1
+        
             partition_response = (
                 partition_index.to_bytes(4, "big") +
-                b"\x00\x03" +                          # error_code = 3
-                b"\xff\xff\xff\xff\xff\xff\xff\xff" +  # base_offset = -1
-                b"\xff\xff\xff\xff\xff\xff\xff\xff" +  # log_append_time_ms = -1
-                b"\xff\xff\xff\xff\xff\xff\xff\xff" +  # log_start_offset = -1
-                b"\x01" +                               # tag buffer
-                b"\x01" +                              # tag buffer
-                b"\x00"                                # tag buffer
+                error_code.to_bytes(2, "big") +
+                base_offset.to_bytes(8, "big", signed=True) +
+                log_append_time.to_bytes(8, "big", signed=True) +
+                log_start_offset.to_bytes(8, "big", signed=True) +
+                b"\x01" +   # record_errors: empty compact array
+                b"\x01" +   # error_message: null compact string
+                b"\x00"     # tag buffer
             )
-
+        
             topic_response = (
                 bytes([len(topic_name) + 1]) + topic_name +
                 b"\x02" +
                 partition_response +
                 b"\x00"
             )
-
+        
             body = (
-                b"\x02" +                # topics compact array (1 element)
+                b"\x02" +
                 topic_response +
-                b"\x00\x00\x00\x00" +   # throttle_time_ms = 0
-                b"\x00"                  # tag buffer
+                b"\x00\x00\x00\x00" +   # throttle_time_ms
+                b"\x00"
             )
-
+        
             response = correlation_id + b"\x00" + body
             conn.sendall(len(response).to_bytes(4, "big") + response)
 
