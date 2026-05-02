@@ -1,18 +1,34 @@
-from email.mime import base
-from pydoc_data.topics import topics
-import socket  # noqa: F401
+import socket
 import threading
+import struct
 
 LOG_DATA = "/tmp/kraft-combined-logs/__cluster_metadata-0/00000000000000000000.log"
 
+
 def encode_compact_size(n):
-    """Encode n as an unsigned varint (used for compact bytes/arrays)."""
     out = b""
     while n > 0x7F:
         out += bytes([(n & 0x7F) | 0x80])
         n >>= 7
     out += bytes([n])
     return out
+
+
+def load_log_data():
+    try:
+        with open(LOG_DATA, "rb") as f:
+            return f.read()
+    except FileNotFoundError:
+        return b""
+
+
+def get_topic_id(topic_name):
+    data = load_log_data()
+    idx = data.find(topic_name)
+    if idx == -1:
+        return None
+    return data[idx + len(topic_name): idx + len(topic_name) + 16]
+
 
 def get_topic_name_from_id(topic_id):
     data = load_log_data()
@@ -21,8 +37,6 @@ def get_topic_name_from_id(topic_id):
         idx = data.find(topic_id, search_start)
         if idx == -1:
             return None
-        # TopicRecord value layout: frame_version(1) + type(1)=0x02 + version(1) + varint(len+1) + name + UUID
-        # Check all possible name lengths at this UUID position
         for name_len in range(1, 128):
             name_start = idx - name_len
             varint_pos = name_start - 1
@@ -30,14 +44,31 @@ def get_topic_name_from_id(topic_id):
             if header_pos < 0:
                 continue
             if (data[varint_pos] == name_len + 1 and
-                data[header_pos + 1] == 0x02 and   # type byte = TopicRecord
-                data[header_pos + 2] == 0x00):      # version = 0
+                    data[header_pos + 1] == 0x02 and
+                    data[header_pos + 2] == 0x00):
                 name = data[name_start:idx]
                 if all(32 <= b <= 126 for b in name):
                     return name
         search_start = idx + 1
 
-def read_partition_log(topic_name, partition=0, offset=0):
+
+def get_partition_count(topic_name):
+    data = load_log_data()
+    topic_id = get_topic_id(topic_name)
+    if topic_id is None:
+        return 0
+    count = 0
+    i = 0
+    while True:
+        idx = data.find(topic_id, i)
+        if idx == -1:
+            break
+        count += 1
+        i = idx + 1
+    return max(1, count - 1)
+
+
+def read_partition_log(topic_name, partition=0):
     if isinstance(topic_name, bytes):
         topic_name = topic_name.decode("utf-8")
     path = f"/tmp/kraft-combined-logs/{topic_name}-{partition}/00000000000000000000.log"
@@ -47,56 +78,8 @@ def read_partition_log(topic_name, partition=0, offset=0):
     except FileNotFoundError:
         return b""
 
-def load_log_data():
-    try:
-        with open(LOG_DATA, "rb") as f:
-            return f.read()
-    except FileNotFoundError:
-        return b""
-
-def get_partition_count(topic_name):
-    data = load_log_data()
-    topic_id = get_topic_id(topic_name)
- 
-    if topic_id is None:
-        return 0
- 
-    # The topic UUID appears once in the topic record, then once per
-    # partition record. So total occurrences - 1 = partition count.
-    count = 0
-    i = 0
-    while True:
-        idx = data.find(topic_id, i)
-        if idx == -1:
-            break
-        count += 1
-        i = idx + 1
- 
-    return max(1, count - 1)
-
-def load_log_data():
-    try:
-        with open(LOG_DATA, "rb") as f:
-            return f.read()
-    except FileNotFoundError:
-        return b""
-
-def get_topic_id(topic_name):
-    data = load_log_data()
-    idx = data.find(topic_name)
-    if idx == -1:
-        return None
-    return data[idx + len(topic_name) : idx + len(topic_name) + 16]
-
-def main():
-    print("Logs from your program will appear here!")
-    server = socket.create_server(("localhost", 9092), reuse_port=True)
-    while True:
-        conn, _ = server.accept()
-        threading.Thread(target=handle_client, args=(conn,), daemon=True).start()
 
 def recv_exact(conn, n):
-    """Read exactly n bytes from the connection."""
     buf = b""
     while len(buf) < n:
         chunk = conn.recv(n - len(buf))
@@ -105,81 +88,56 @@ def recv_exact(conn, n):
         buf += chunk
     return buf
 
+
+def main():
+    print("Logs from your program will appear here!")
+    server = socket.create_server(("localhost", 9092), reuse_port=True)
+    while True:
+        conn, _ = server.accept()
+        threading.Thread(target=handle_client, args=(conn,), daemon=True).start()
+
+
 def handle_client(conn):
     while True:
-        # Read 4-byte message size header
         size_bytes = recv_exact(conn, 4)
         if not size_bytes:
             break
         message_size = int.from_bytes(size_bytes, "big")
-        
-        # Read exactly message_size bytes
         data = recv_exact(conn, message_size)
         if not data:
             break
-        
-        # Prepend size bytes so field offsets stay the same as before
         data = size_bytes + data
-        
+
         api_key = int.from_bytes(data[4:6], "big")
         correlation_id = data[8:12]
-        
-        if api_key == 18:
+
+        if api_key == 18:  # ApiVersions
             version = int.from_bytes(data[6:8], "big")
-            if version <= 4:
-                error_code = 0
-            else:
-                error_code = 35
-            error_bytes = error_code.to_bytes(2, "big")
+            error_code = 0 if version <= 4 else 35
             body = (
-                error_bytes +
-                b"\x05" +          # 4 entries (compact array: count+1 = 5)
-
-                # Produce (API key 0)
-                b"\x00\x00" +      # api_key = 0
-                b"\x00\x00" +      # min_version = 0
-                b"\x00\x0b" +      # max_version = 11
-                b"\x00" +
-
-                b"\x00\x12" +      # ApiVersions (18)
-                b"\x00\x00" +
-                b"\x00\x04" +
-                b"\x00" +
-
-                b"\x00\x01" +      # Fetch (1)
-                b"\x00\x00" +
-                b"\x00\x10" +
-                b"\x00" +
-
-                b"\x00\x4b" +      # DescribeTopicPartitions (75)
-                b"\x00\x00" +
-                b"\x00\x00" +
-                b"\x00" +
-
+                error_code.to_bytes(2, "big") +
+                b"\x05" +
+                b"\x00\x00" + b"\x00\x00" + b"\x00\x0b" + b"\x00" +  # Produce (0)
+                b"\x00\x12" + b"\x00\x00" + b"\x00\x04" + b"\x00" +  # ApiVersions (18)
+                b"\x00\x01" + b"\x00\x00" + b"\x00\x10" + b"\x00" +  # Fetch (1)
+                b"\x00\x4b" + b"\x00\x00" + b"\x00\x00" + b"\x00" +  # DescribeTopicPartitions (75)
                 b"\x00\x00\x00\x00" +
                 b"\x00"
             )
             response = correlation_id + body
-            size = len(response).to_bytes(4, "big")
-            conn.sendall(size + response)
-        
-        elif api_key == 0:  # Produce
-            # Parse request to extract topic name and partition index
-            idx = 12  # start after: size(4) + api_key(2) + version(2) + correlation_id(4)
+            conn.sendall(len(response).to_bytes(4, "big") + response)
 
-            # client_id: nullable string (int16 length)
+        elif api_key == 0:  # Produce
+            idx = 12
+            # client_id: int16 length + bytes
             client_id_len = int.from_bytes(data[idx:idx+2], "big", signed=True)
             idx += 2
             if client_id_len > 0:
                 idx += client_id_len
             idx += 1  # tag buffer
 
-            # Produce request fields
-            idx += 2  # transactional_id (compact nullable string, \xff\xff = null... actually compact: \x00 = null)
-            # Actually transactional_id is COMPACT_NULLABLE_STRING: varint length
-            # Back up and parse properly
-            idx -= 2
-            txn_id_len = data[idx] - 1  # compact nullable: 0 = null, else len+1
+            # transactional_id: compact nullable string
+            txn_id_len = data[idx] - 1
             idx += 1
             if txn_id_len > 0:
                 idx += txn_id_len
@@ -187,95 +145,75 @@ def handle_client(conn):
             idx += 2  # acks (int16)
             idx += 4  # timeout_ms (int32)
 
-            # topic_data: compact array
+            # topic_data compact array
             num_topics = data[idx] - 1
             idx += 1
 
-            # Read first topic
-            topic_name_len = data[idx] - 1  # compact string
+            # first topic name
+            topic_name_len = data[idx] - 1
             idx += 1
             topic_name = data[idx:idx+topic_name_len]
             idx += topic_name_len
 
-            # partition_data: compact array
+            # partition_data compact array
             num_partitions = data[idx] - 1
             idx += 1
 
-            # Read first partition
+            # first partition index
             partition_index = int.from_bytes(data[idx:idx+4], "big")
 
-            # Build response
             partition_response = (
-                partition_index.to_bytes(4, "big") +      # index
-                b"\x00\x03" +                              # error_code = 3 (UNKNOWN_TOPIC_OR_PARTITION)
-                b"\xff\xff\xff\xff\xff\xff\xff\xff" +      # base_offset = -1
-                b"\xff\xff\xff\xff\xff\xff\xff\xff" +      # log_append_time_ms = -1
-                b"\xff\xff\xff\xff\xff\xff\xff\xff" +      # log_start_offset = -1
-                b"\x00"                                    # tag buffer
+                partition_index.to_bytes(4, "big") +
+                b"\x00\x03" +                          # error_code = 3
+                b"\xff\xff\xff\xff\xff\xff\xff\xff" +  # base_offset = -1
+                b"\xff\xff\xff\xff\xff\xff\xff\xff" +  # log_append_time_ms = -1
+                b"\xff\xff\xff\xff\xff\xff\xff\xff" +  # log_start_offset = -1
+                b"\x00"                                # tag buffer
             )
 
             topic_response = (
-                bytes([len(topic_name) + 1]) + topic_name +  # compact string topic name
-                b"\x02" +                                     # partitions compact array (1 element)
+                bytes([len(topic_name) + 1]) + topic_name +
+                b"\x02" +
                 partition_response +
-                b"\x00"                                       # tag buffer
+                b"\x00"
             )
 
             body = (
                 b"\x02" +                # topics compact array (1 element)
                 topic_response +
-                b"\x00\x00\x00\x00" +   # error_code... wait, no - just tag buffer
+                b"\x00\x00\x00\x00" +   # throttle_time_ms = 0
                 b"\x00"                  # tag buffer
             )
 
-            # Fix: remove the extra 4 bytes, Produce response v11 ends with just tag buffer
-            body = (
-                b"\x00\x00\x00\x00" +   # throttle_time_ms
-                b"\x02" +                # topics compact array (1 element)
-                topic_response +
-                b"\x00"                  # tag buffer
-            )
+            response = correlation_id + b"\x00" + body
+            conn.sendall(len(response).to_bytes(4, "big") + response)
 
-            response = correlation_id + b"\x00" + body  # \x00 = response header tag buffer
-            size = len(response).to_bytes(4, "big")
-            conn.sendall(size + response)    
-        
-        elif api_key == 75:
-            # client_id is a nullable string: int16 (signed), -1 means null
+        elif api_key == 75:  # DescribeTopicPartitions
             client_id_length = int.from_bytes(data[12:14], "big", signed=True)
             if client_id_length < 0:
                 client_id_length = 0
-            base = 14 + client_id_length
-            base += 1  # skip tag buffer byte
-                        
-            num_topics = data[base] - 1  # compact array: actual count = byte - 1
-            idx = base + 1
+            base = 14 + client_id_length + 1  # +1 for tag buffer
 
-            topics = []
+            num_topics = data[base] - 1
+            idx = base + 1
+            topics_list = []
 
             for _ in range(num_topics):
                 if idx >= len(data):
                     break
-                
-                topic_len = data[idx] - 1  # compact string: actual len = byte - 1
+                topic_len = data[idx] - 1
                 idx += 1
-
                 if idx + topic_len > len(data):
                     break
-                
-                topic_name = data[idx: idx + topic_len]
-                idx += topic_len
-                idx += 1  # skip per-topic tag buffer
+                topic_name = data[idx:idx+topic_len]
+                idx += topic_len + 1  # +1 for tag buffer
+                topics_list.append(topic_name)
 
-                topics.append(topic_name)           
-            
-            topics.sort()
-            
+            topics_list.sort()
             topics_body = b""
 
-            for topic_name in topics:
+            for topic_name in topics_list:
                 topic_id = get_topic_id(topic_name)
-
                 if topic_id is None:
                     error_code = 3
                     topic_id = b"\x00" * 16
@@ -284,7 +222,6 @@ def handle_client(conn):
                     error_code = 0
                     partitions_count = get_partition_count(topic_name)
                     partitions = bytes([partitions_count + 1])
-
                     for i in range(partitions_count):
                         partitions += (
                             b"\x00\x00" +
@@ -293,121 +230,97 @@ def handle_client(conn):
                             b"\x00\x00\x00\x00" +
                             b"\x02" + b"\x00\x00\x00\x01" +
                             b"\x02" + b"\x00\x00\x00\x01" +
-                            b"\x01" +
-                            b"\x01" +
-                            b"\x01" +
+                            b"\x01" + b"\x01" + b"\x01" +
                             b"\x00"
                         )
-
                 topics_body += (
                     error_code.to_bytes(2, "big") +
-                    bytes([len(topic_name) + 1]) +
-                    topic_name +
+                    bytes([len(topic_name) + 1]) + topic_name +
                     topic_id +
-                    b"\x00" +          # is_internal
+                    b"\x00" +
                     partitions +
-                    b"\x00\x00\x00\x00" +  # authorized_operations
-                    b"\x00"            # tag buffer
+                    b"\x00\x00\x00\x00" +
+                    b"\x00"
                 )
-            
-            topics_array = bytes([len(topics) + 1]) + topics_body
-            
+
             body = (
-                b"\x00\x00\x00\x00" +  # throttle_time_ms
-                topics_array +
-                b"\xff" +              # next_cursor = null
-                b"\x00"               # tag buffer
+                b"\x00\x00\x00\x00" +
+                bytes([len(topics_list) + 1]) + topics_body +
+                b"\xff" +
+                b"\x00"
             )
-            
-            response = correlation_id + b"\x00" + body  # \x00 = response header tag buffer
-            size = len(response).to_bytes(4, "big")
-            conn.sendall(size + response)
-        
-        elif api_key == 1:
+            response = correlation_id + b"\x00" + body
+            conn.sendall(len(response).to_bytes(4, "big") + response)
+
+        elif api_key == 1:  # Fetch
             client_id_length = int.from_bytes(data[12:14], "big", signed=True)
             if client_id_length < 0:
                 client_id_length = 0
-            
-            base = 14 + client_id_length
-            base += 1  # skip tag buffer
-            base += (4 + 4 + 4 + 1 + 4 + 4)  # skip fetch-specific fields
-            
-            num_topics = data[base] - 1  # compact array
-            idx = base + 1
+            base = 14 + client_id_length + 1  # +1 tag buffer
+            base += (4 + 4 + 4 + 1 + 4 + 4)  # fetch-specific fields
 
+            num_topics = data[base] - 1
+            idx = base + 1
             header = correlation_id + b"\x00"
 
             if num_topics == 0:
                 body = (
-                    b"\x00\x00\x00\x00" +  # throttle_time_ms
-                    b"\x00\x00" +          # error_code
-                    b"\x00\x00\x00\x00" +  # session_id
-                    b"\x01" +              # responses: compact array length 0 (1 = empty)
-                    b"\x00"                # tag buffer
+                    b"\x00\x00\x00\x00" +
+                    b"\x00\x00" +
+                    b"\x00\x00\x00\x00" +
+                    b"\x01" +
+                    b"\x00"
                 )
             else:
-                topic_id = data[idx: idx + 16]
+                topic_id = data[idx:idx+16]
                 idx += 16
-                
-                # Parse partitions array
-                num_partitions = data[idx] - 1  # compact array
+                num_partitions = data[idx] - 1
                 idx += 1
-                
-                # Parse first partition to get partition_index and fetch_offset
-                partition_index = int.from_bytes(data[idx: idx + 4], "big")
+                partition_index = int.from_bytes(data[idx:idx+4], "big")
                 idx += 4
-                fetch_offset = int.from_bytes(data[idx: idx + 8], "big")
-                
+                fetch_offset = int.from_bytes(data[idx:idx+8], "big")
+
                 log_data = load_log_data()
                 topic_known = topic_id in log_data
-                
                 record_bytes = b""
-                
+
                 if not topic_known:
                     partition_error_code = b"\x00\x64"
-                    record_bytes = b""
                 else:
                     partition_error_code = b"\x00\x00"
                     topic_name = get_topic_name_from_id(topic_id)
                     if topic_name is not None:
-                        record_bytes = read_partition_log(topic_name, partition_index, 0)
+                        record_bytes = read_partition_log(topic_name, partition_index)
 
                 if record_bytes:
                     records_field = encode_compact_size(len(record_bytes) + 1) + record_bytes
                 else:
-                    records_field = b"\x01"  # compact nullable: 1 = empty (0 bytes)
+                    records_field = b"\x01"
 
                 partition = (
                     partition_index.to_bytes(4, "big") +
                     partition_error_code +
-                    b"\x00\x00\x00\x00\x00\x00\x00\x00" +  # high_watermark
-                    b"\x00\x00\x00\x00\x00\x00\x00\x00" +  # last_stable_offset
-                    b"\x00\x00\x00\x00\x00\x00\x00\x00" +  # log_start_offset
-                    b"\x01" +                               # aborted_transactions (empty)
-                    b"\xff\xff\xff\xff" +                   # preferred_read_replica = -1
+                    b"\x00\x00\x00\x00\x00\x00\x00\x00" +
+                    b"\x00\x00\x00\x00\x00\x00\x00\x00" +
+                    b"\x00\x00\x00\x00\x00\x00\x00\x00" +
+                    b"\x01" +
+                    b"\xff\xff\xff\xff" +
                     records_field +
-                    b"\x00"                                 # tag buffer
+                    b"\x00"
                 )
-
-                topic_block = (
-                    topic_id +
-                    b"\x02" +   # partitions compact array (1 element)
-                    partition +
-                    b"\x00"     # tag buffer
-                )
-
+                topic_block = topic_id + b"\x02" + partition + b"\x00"
                 body = (
-                    b"\x00\x00\x00\x00" +  # throttle_time_ms
-                    b"\x00\x00" +          # error_code
-                    b"\x00\x00\x00\x00" +  # session_id
-                    b"\x02" +              # responses compact array (1 topic)
+                    b"\x00\x00\x00\x00" +
+                    b"\x00\x00" +
+                    b"\x00\x00\x00\x00" +
+                    b"\x02" +
                     topic_block +
-                    b"\x00"                # tag buffer
+                    b"\x00"
                 )
 
             response = header + body
-            size = len(response).to_bytes(4, "big")
-            conn.sendall(size + response)
-        
+            conn.sendall(len(response).to_bytes(4, "big") + response)
+
+
 if __name__ == "__main__":
     main()
