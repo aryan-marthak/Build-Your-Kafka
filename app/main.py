@@ -94,11 +94,31 @@ def main():
         conn, _ = server.accept()
         threading.Thread(target=handle_client, args=(conn,), daemon=True).start()
 
+def recv_exact(conn, n):
+    """Read exactly n bytes from the connection."""
+    buf = b""
+    while len(buf) < n:
+        chunk = conn.recv(n - len(buf))
+        if not chunk:
+            return None
+        buf += chunk
+    return buf
+
 def handle_client(conn):
     while True:
-        data = conn.recv(1024)
+        # Read 4-byte message size header
+        size_bytes = recv_exact(conn, 4)
+        if not size_bytes:
+            break
+        message_size = int.from_bytes(size_bytes, "big")
+        
+        # Read exactly message_size bytes
+        data = recv_exact(conn, message_size)
         if not data:
             break
+        
+        # Prepend size bytes so field offsets stay the same as before
+        data = size_bytes + data
         
         api_key = int.from_bytes(data[4:6], "big")
         correlation_id = data[8:12]
