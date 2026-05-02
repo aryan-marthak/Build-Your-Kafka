@@ -183,9 +183,17 @@ def handle_client(conn):
                 base_offset = -1
                 log_start_offset = -1
             else:
-                error_code = 0
-                base_offset = 0
-                log_start_offset = 0
+                topic_name_str = topic_name.decode("utf-8")
+                partition_count = get_partition_count(topic_name_str)
+            
+                if partition_index >= partition_count:
+                    error_code = 3
+                    base_offset = -1
+                    log_start_offset = -1
+                else:
+                    error_code = 0
+                    base_offset = 0
+                    log_start_offset = 0
 
             log_append_time = -1
 
