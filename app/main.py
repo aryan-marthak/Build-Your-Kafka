@@ -34,7 +34,14 @@ def read_partition_log(topic_name, partition=0, offset=0):
     path = f"/tmp/kraft-combined-logs/{topic_name}-{partition}/00000000000000000000.log"
     try:
         with open(path, "rb") as f:
-            return f.read()   # read entire file, don't seek to fetch_offset
+            return f.read()
+    except FileNotFoundError:
+        return b""
+
+def load_log_data():
+    try:
+        with open(LOG_DATA, "rb") as f:
+            return f.read()
     except FileNotFoundError:
         return b""
 
@@ -254,10 +261,9 @@ def handle_client(conn):
                         record_bytes = read_partition_log(topic_name, partition_index, 0)
 
                 if record_bytes:
-                    # records field uses regular int32 length (NOT compact varint - it's RECORDS type)
-                    records_field = len(record_bytes).to_bytes(4, "big", signed=False) + record_bytes
+                    records_field = encode_compact_size(len(record_bytes) + 1) + record_bytes
                 else:
-                    records_field = b"\xff\xff\xff\xff"  # -1 = null records
+                    records_field = b"\x00"  # compact null
 
                 partition = (
                     partition_index.to_bytes(4, "big") +
