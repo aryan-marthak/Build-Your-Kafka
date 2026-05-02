@@ -222,7 +222,6 @@ def handle_client(conn):
             )
 
             body = (
-                b"\x00\x00\x00\x00" +   # throttle_time_ms
                 b"\x02" +                # topics compact array (1 element)
                 topic_response +
                 b"\x00\x00\x00\x00" +   # error_code... wait, no - just tag buffer
