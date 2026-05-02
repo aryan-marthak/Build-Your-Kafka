@@ -175,21 +175,13 @@ def handle_client(conn):
             topic_id = get_topic_id(topic_name)
 
             if topic_id is None:
-                # Unknown topic
                 error_code = 3
                 base_offset = -1
                 log_start_offset = -1
             else:
-                # Check partition exists
-                partition_count = get_partition_count(topic_name)
-                if partition_index >= partition_count:
-                    error_code = 3
-                    base_offset = -1
-                    log_start_offset = -1
-                else:
-                    error_code = 0
-                    base_offset = 0
-                    log_start_offset = 0
+                error_code = 0
+                base_offset = 0
+                log_start_offset = 0
 
             log_append_time = -1
 
