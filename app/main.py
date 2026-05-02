@@ -256,10 +256,11 @@ def handle_client(conn):
                         record_bytes = read_partition_log(topic_name, partition_index, 0)
 
                 if record_bytes:
-                    # records = int32 length + raw bytes
-                    records_field = len(record_bytes).to_bytes(4, "big") + record_bytes
+                    # Kafka v16 uses compact bytes: varint of (length + 1) followed by raw bytes
+                    records_field = encode_compact_size(len(record_bytes) + 1) + record_bytes
                 else:
-                    records_field = b"\x00\x00\x00\x00"  # 0 length
+                    # Compact bytes empty = varint(0)
+                    records_field = encode_compact_size(0)
 
                 partition = (
                     partition_index.to_bytes(4, "big") +
