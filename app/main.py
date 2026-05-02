@@ -25,16 +25,18 @@ def load_log_data():
 def get_topic_id(topic_name):
     if isinstance(topic_name, str):
         topic_name = topic_name.encode()
+
     data = load_log_data()
-    # Search for the TopicRecord signature: \x00\x02\x00 + compact_string(name) + UUID
-    pattern = b'\x00\x02\x00' + bytes([len(topic_name) + 1]) + topic_name
-    idx = data.find(pattern)
+    idx = data.find(topic_name)
     if idx == -1:
         return None
-    uuid_start = idx + len(pattern)
-    if uuid_start + 16 > len(data):
-        return None
-    return data[uuid_start:uuid_start + 16]
+
+    # topic_id is usually right after name (best-effort)
+    start = idx + len(topic_name)
+    if start + 16 <= len(data):
+        return data[start:start+16]
+
+    return None
 
 
 def get_topic_name_from_id(topic_id):
