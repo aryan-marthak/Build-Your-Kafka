@@ -134,35 +134,113 @@ def handle_client(conn):
             body = (
                 error_bytes +
                 b"\x05" +          # 4 entries (compact array: count+1 = 5)
-                
+
                 # Produce (API key 0)
                 b"\x00\x00" +      # api_key = 0
                 b"\x00\x00" +      # min_version = 0
                 b"\x00\x0b" +      # max_version = 11
                 b"\x00" +
-                
+
                 b"\x00\x12" +      # ApiVersions (18)
                 b"\x00\x00" +
                 b"\x00\x04" +
                 b"\x00" +
-                
+
                 b"\x00\x01" +      # Fetch (1)
                 b"\x00\x00" +
                 b"\x00\x10" +
                 b"\x00" +
-                
+
                 b"\x00\x4b" +      # DescribeTopicPartitions (75)
                 b"\x00\x00" +
                 b"\x00\x00" +
                 b"\x00" +
-                
+
                 b"\x00\x00\x00\x00" +
                 b"\x00"
             )
             response = correlation_id + body
             size = len(response).to_bytes(4, "big")
             conn.sendall(size + response)
-            
+        
+        elif api_key == 0:  # Produce
+            # Parse request to extract topic name and partition index
+            idx = 12  # start after: size(4) + api_key(2) + version(2) + correlation_id(4)
+
+            # client_id: nullable string (int16 length)
+            client_id_len = int.from_bytes(data[idx:idx+2], "big", signed=True)
+            idx += 2
+            if client_id_len > 0:
+                idx += client_id_len
+            idx += 1  # tag buffer
+
+            # Produce request fields
+            idx += 2  # transactional_id (compact nullable string, \xff\xff = null... actually compact: \x00 = null)
+            # Actually transactional_id is COMPACT_NULLABLE_STRING: varint length
+            # Back up and parse properly
+            idx -= 2
+            txn_id_len = data[idx] - 1  # compact nullable: 0 = null, else len+1
+            idx += 1
+            if txn_id_len > 0:
+                idx += txn_id_len
+
+            idx += 2  # acks (int16)
+            idx += 4  # timeout_ms (int32)
+
+            # topic_data: compact array
+            num_topics = data[idx] - 1
+            idx += 1
+
+            # Read first topic
+            topic_name_len = data[idx] - 1  # compact string
+            idx += 1
+            topic_name = data[idx:idx+topic_name_len]
+            idx += topic_name_len
+
+            # partition_data: compact array
+            num_partitions = data[idx] - 1
+            idx += 1
+
+            # Read first partition
+            partition_index = int.from_bytes(data[idx:idx+4], "big")
+
+            # Build response
+            partition_response = (
+                partition_index.to_bytes(4, "big") +      # index
+                b"\x00\x03" +                              # error_code = 3 (UNKNOWN_TOPIC_OR_PARTITION)
+                b"\xff\xff\xff\xff\xff\xff\xff\xff" +      # base_offset = -1
+                b"\xff\xff\xff\xff\xff\xff\xff\xff" +      # log_append_time_ms = -1
+                b"\xff\xff\xff\xff\xff\xff\xff\xff" +      # log_start_offset = -1
+                b"\x00"                                    # tag buffer
+            )
+
+            topic_response = (
+                bytes([len(topic_name) + 1]) + topic_name +  # compact string topic name
+                b"\x02" +                                     # partitions compact array (1 element)
+                partition_response +
+                b"\x00"                                       # tag buffer
+            )
+
+            body = (
+                b"\x00\x00\x00\x00" +   # throttle_time_ms
+                b"\x02" +                # topics compact array (1 element)
+                topic_response +
+                b"\x00\x00\x00\x00" +   # error_code... wait, no - just tag buffer
+                b"\x00"                  # tag buffer
+            )
+
+            # Fix: remove the extra 4 bytes, Produce response v11 ends with just tag buffer
+            body = (
+                b"\x00\x00\x00\x00" +   # throttle_time_ms
+                b"\x02" +                # topics compact array (1 element)
+                topic_response +
+                b"\x00"                  # tag buffer
+            )
+
+            response = correlation_id + b"\x00" + body  # \x00 = response header tag buffer
+            size = len(response).to_bytes(4, "big")
+            conn.sendall(size + response)    
+        
         elif api_key == 75:
             # client_id is a nullable string: int16 (signed), -1 means null
             client_id_length = int.from_bytes(data[12:14], "big", signed=True)
