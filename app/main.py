@@ -40,10 +40,15 @@ def read_partition_log(topic_name, partition=0, offset=0):
     if isinstance(topic_name, bytes):
         topic_name = topic_name.decode("utf-8")
     path = f"/tmp/kraft-combined-logs/{topic_name}-{partition}/00000000000000000000.log"
+    print(f"DEBUG: Reading partition log from: {path}", flush=True)
     try:
         with open(path, "rb") as f:
-            return f.read()
+            data = f.read()
+            print(f"DEBUG: Read {len(data)} bytes from partition log", flush=True)
+            print(f"DEBUG: First 80 bytes hex: {data[:80].hex()}", flush=True)
+            return data
     except FileNotFoundError:
+        print(f"DEBUG: File not found: {path}", flush=True)
         return b""
 
 def load_log_data():
@@ -277,6 +282,16 @@ def handle_client(conn):
                 log_data = load_log_data()
                 topic_known = topic_id in log_data
                 
+                print(f"DEBUG: topic_id hex: {topic_id.hex()}", flush=True)
+                print(f"DEBUG: topic_known: {topic_known}", flush=True)
+                
+                import os
+                try:
+                    dirs = os.listdir("/tmp/kraft-combined-logs/")
+                    print(f"DEBUG: log dirs: {dirs}", flush=True)
+                except Exception as e:
+                    print(f"DEBUG: listdir error: {e}", flush=True)
+                
                 record_bytes = b""
                 
                 if not topic_known:
@@ -285,11 +300,13 @@ def handle_client(conn):
                 else:
                     partition_error_code = b"\x00\x00"
                     topic_name = get_topic_name_from_id(topic_id)
+                    print(f"DEBUG: topic_name from id: {topic_name}", flush=True)
                     if topic_name is not None:
                         record_bytes = read_partition_log(topic_name, partition_index, 0)
 
                 if record_bytes:
                     records_field = encode_compact_size(len(record_bytes) + 1) + record_bytes
+                    print(f"DEBUG: records_field length: {len(records_field)}, varint: {encode_compact_size(len(record_bytes) + 1).hex()}", flush=True)
                 else:
                     records_field = b"\x00"  # compact null
 
