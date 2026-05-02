@@ -67,18 +67,15 @@ def get_partition_count(topic_name):
         return 0
     
     data = load_log_data()
-    # PartitionRecord signature: \x00\x03\x00 + partition_id(4 bytes) + topic_uuid(16 bytes)
-    # Count how many PartitionRecords reference this topic_id
     count = 0
     search_start = 0
     while True:
         idx = data.find(topic_id, search_start)
         if idx == -1:
             break
-        # Check if this is a PartitionRecord: \x00\x03\x00 + 4-byte partition_id + UUID
-        # So UUID is at offset 7 from the \x00\x03\x00 header
+        # PartitionRecord: frame_version=0x00, type=0x03, version=any, partition_id(4 bytes), UUID
         header_pos = idx - 7
-        if header_pos >= 0 and data[header_pos:header_pos+3] == b'\x00\x03\x00':
+        if header_pos >= 0 and data[header_pos] == 0x00 and data[header_pos + 1] == 0x03:
             count += 1
         search_start = idx + 1
     
