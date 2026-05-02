@@ -168,6 +168,8 @@ def handle_client(conn):
                 b"\xff\xff\xff\xff\xff\xff\xff\xff" +  # base_offset = -1
                 b"\xff\xff\xff\xff\xff\xff\xff\xff" +  # log_append_time_ms = -1
                 b"\xff\xff\xff\xff\xff\xff\xff\xff" +  # log_start_offset = -1
+                b"\x01" +                               # tag buffer
+                b"\x01" +                              # tag buffer
                 b"\x00"                                # tag buffer
             )
 
