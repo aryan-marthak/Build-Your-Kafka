@@ -60,19 +60,29 @@ def get_topic_name_from_id(topic_id):
 
 
 def get_partition_count(topic_name):
-    data = load_log_data()
+    if isinstance(topic_name, str):
+        topic_name = topic_name.encode()
     topic_id = get_topic_id(topic_name)
     if topic_id is None:
         return 0
+    
+    data = load_log_data()
+    # PartitionRecord signature: \x00\x03\x00 + partition_id(4 bytes) + topic_uuid(16 bytes)
+    # Count how many PartitionRecords reference this topic_id
     count = 0
-    i = 0
+    search_start = 0
     while True:
-        idx = data.find(topic_id, i)
+        idx = data.find(topic_id, search_start)
         if idx == -1:
             break
-        count += 1
-        i = idx + 1
-    return max(1, count - 1)
+        # Check if this is a PartitionRecord: \x00\x03\x00 + 4-byte partition_id + UUID
+        # So UUID is at offset 7 from the \x00\x03\x00 header
+        header_pos = idx - 7
+        if header_pos >= 0 and data[header_pos:header_pos+3] == b'\x00\x03\x00':
+            count += 1
+        search_start = idx + 1
+    
+    return count
 
 
 def read_partition_log(topic_name, partition=0):
