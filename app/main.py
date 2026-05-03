@@ -210,6 +210,7 @@ def handle_client(conn):
             idx += 1
             topic_name = data[idx:idx+topic_name_len]
             idx += topic_name_len
+            idx += 1
 
             # partition_data compact array
             num_partitions = data[idx] - 1
