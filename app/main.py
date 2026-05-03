@@ -1,5 +1,6 @@
 import socket
 import threading
+import os
 import struct
 
 LOG_DATA = "/tmp/kraft-combined-logs/__cluster_metadata-0/00000000000000000000.log"
@@ -192,32 +193,42 @@ def handle_client(conn):
             if client_id_len > 0:
                 idx += client_id_len
             idx += 1  # tag buffer
-
+        
             # transactional_id: compact nullable string
             txn_id_len = data[idx] - 1
             idx += 1
             if txn_id_len > 0:
                 idx += txn_id_len
-
+        
             idx += 2  # acks
             idx += 4  # timeout_ms
-
+        
             num_topics = data[idx] - 1
             idx += 1
-
+        
             topic_name_len = data[idx] - 1
             idx += 1
             topic_name = data[idx:idx+topic_name_len]
             idx += topic_name_len
-
+        
+            # partition_data compact array
             num_partitions = data[idx] - 1
             idx += 1
-
+        
             partition_index = int.from_bytes(data[idx:idx+4], "big")
-
+            idx += 4
+        
+            idx += 4  # current_leader_epoch
+            idx += 1  # tag buffer for partition entry
+        
+            # records: compact bytes field (varint of len+1, then raw bytes)
+            records_len_varint, idx = decode_varint(data, idx)
+            records_len = records_len_varint - 1
+            record_batch_bytes = data[idx:idx + records_len] if records_len > 0 else b""
+        
             # Validate using proper metadata parsing
             topic_id = get_topic_id(topic_name)
-
+        
             if topic_id is None:
                 error_code = 3
                 base_offset = -1
@@ -232,9 +243,18 @@ def handle_client(conn):
                     error_code = 0
                     base_offset = 0
                     log_start_offset = 0
-
+        
+                    # Write record batch to disk
+                    if record_batch_bytes:
+                        topic_name_str = topic_name.decode("utf-8") if isinstance(topic_name, bytes) else topic_name
+                        log_dir = f"/tmp/kraft-combined-logs/{topic_name_str}-{partition_index}"
+                        os.makedirs(log_dir, exist_ok=True)
+                        log_path = f"{log_dir}/00000000000000000000.log"
+                        with open(log_path, "ab") as f:
+                            f.write(record_batch_bytes)
+        
             log_append_time = -1
-
+        
             partition_response = (
                 partition_index.to_bytes(4, "big") +
                 error_code.to_bytes(2, "big") +
@@ -245,21 +265,21 @@ def handle_client(conn):
                 b"\x01" +   # error_message: null compact string
                 b"\x00"     # tag buffer
             )
-
+        
             topic_response = (
                 bytes([len(topic_name) + 1]) + topic_name +
                 b"\x02" +
                 partition_response +
                 b"\x00"
             )
-
+        
             body = (
                 b"\x02" +
                 topic_response +
                 b"\x00\x00\x00\x00" +   # throttle_time_ms
                 b"\x00"
             )
-
+        
             response = correlation_id + b"\x00" + body
             conn.sendall(len(response).to_bytes(4, "big") + response)
 
