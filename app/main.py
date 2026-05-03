@@ -225,6 +225,9 @@ def handle_client(conn):
             records_len = records_len_varint - 1
             record_batch_bytes = data[idx:idx + records_len] if records_len > 0 else b""
 
+            print(f"DEBUG records_len_varint={records_len_varint} records_len={records_len} batch_len={len(record_batch_bytes)}", flush=True)
+            print(f"DEBUG topic={topic_name} topic_id={get_topic_id(topic_name)} partition_count={get_partition_count(topic_name)}", flush=True)
+
             # Validate using proper metadata parsing
             topic_id = get_topic_id(topic_name)
 
