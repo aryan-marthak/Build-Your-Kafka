@@ -193,45 +193,45 @@ def handle_client(conn):
             if client_id_len > 0:
                 idx += client_id_len
             idx += 1  # tag buffer
-        
+
             # transactional_id: compact nullable string
             txn_id_len = data[idx] - 1
             idx += 1
             if txn_id_len > 0:
                 idx += txn_id_len
-        
+
             idx += 2  # acks
             idx += 4  # timeout_ms
-        
+
             num_topics = data[idx] - 1
             idx += 1
-        
+
             topics_body = b""
-        
+
             for _ in range(num_topics):
                 topic_name_len = data[idx] - 1
                 idx += 1
                 topic_name = data[idx:idx+topic_name_len]
                 idx += topic_name_len
-        
+
                 num_partitions = data[idx] - 1
                 idx += 1
-        
+
                 topic_id = get_topic_id(topic_name)
                 partition_count = get_partition_count(topic_name) if topic_id else 0
-        
+
                 partition_responses = b""
-        
+
                 for _ in range(num_partitions):
                     partition_index = int.from_bytes(data[idx:idx+4], "big")
                     idx += 4
-        
+
                     records_len_varint, idx = decode_varint(data, idx)
                     records_len = records_len_varint - 1
                     record_batch_bytes = data[idx:idx + records_len] if records_len > 0 else b""
                     idx += max(0, records_len)
                     idx += 1  # partition tag buffer
-        
+
                     if topic_id is None or partition_index >= partition_count:
                         error_code = 3
                         base_offset = -1
@@ -246,7 +246,7 @@ def handle_client(conn):
                             os.makedirs(log_dir, exist_ok=True)
                             with open(f"{log_dir}/00000000000000000000.log", "ab") as f:
                                 f.write(record_batch_bytes)
-        
+
                     partition_responses += (
                         partition_index.to_bytes(4, "big") +
                         error_code.to_bytes(2, "big") +
@@ -257,21 +257,23 @@ def handle_client(conn):
                         b"\x01" +
                         b"\x00"
                     )
-        
+                
+                idx += 1
+                
                 topics_body += (
                     bytes([len(topic_name) + 1]) + topic_name +
                     bytes([num_partitions + 1]) +
                     partition_responses +
                     b"\x00"  # topic tag buffer
                 )
-        
+
             body = (
                 bytes([num_topics + 1]) +   # topics compact array
                 topics_body +
                 b"\x00\x00\x00\x00" +       # throttle_time_ms
                 b"\x00"                      # tag buffer
             )
-        
+
             response = correlation_id + b"\x00" + body
             conn.sendall(len(response).to_bytes(4, "big") + response)
     
