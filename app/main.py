@@ -193,50 +193,45 @@ def handle_client(conn):
             if client_id_len > 0:
                 idx += client_id_len
             idx += 1  # tag buffer
-
+        
             # transactional_id: compact nullable string
             txn_id_len = data[idx] - 1
             idx += 1
             if txn_id_len > 0:
                 idx += txn_id_len
-
+        
             idx += 2  # acks
             idx += 4  # timeout_ms
-
+        
             num_topics = data[idx] - 1
             idx += 1
-
+        
             topic_name_len = data[idx] - 1
             idx += 1
             topic_name = data[idx:idx+topic_name_len]
             idx += topic_name_len
-            print(f"DEBUG after_topic idx={idx} next20={data[idx:idx+20].hex()}", flush=True)
-            # partition_data compact array
+        
+            # partition_data compact array - loop over ALL partitions
             num_partitions = data[idx] - 1
             idx += 1
-
-            partition_index = int.from_bytes(data[idx:idx+4], "big")
-            idx += 4
-
         
-            # records: compact bytes field (varint of len+1, then raw bytes)
-            records_len_varint, idx = decode_varint(data, idx)
-            records_len = records_len_varint - 1
-            record_batch_bytes = data[idx:idx + records_len] if records_len > 0 else b""
-
-            print(f"DEBUG records_len_varint={records_len_varint} records_len={records_len} batch_len={len(record_batch_bytes)}", flush=True)
-            print(f"DEBUG topic={topic_name} topic_id={get_topic_id(topic_name)} partition_count={get_partition_count(topic_name)}", flush=True)
-
-            # Validate using proper metadata parsing
             topic_id = get_topic_id(topic_name)
-
-            if topic_id is None:
-                error_code = 3
-                base_offset = -1
-                log_start_offset = -1
-            else:
-                partition_count = get_partition_count(topic_name)
-                if partition_index >= partition_count:
+            partition_count = get_partition_count(topic_name) if topic_id else 0
+        
+            partition_responses = b""
+        
+            for _ in range(num_partitions):
+                partition_index = int.from_bytes(data[idx:idx+4], "big")
+                idx += 4
+        
+                # records: compact bytes field (varint of len+1, then raw bytes)
+                records_len_varint, idx = decode_varint(data, idx)
+                records_len = records_len_varint - 1
+                record_batch_bytes = data[idx:idx + records_len] if records_len > 0 else b""
+                idx += max(0, records_len)
+                idx += 1  # partition tag buffer
+        
+                if topic_id is None or partition_index >= partition_count:
                     error_code = 3
                     base_offset = -1
                     log_start_offset = -1
@@ -244,46 +239,40 @@ def handle_client(conn):
                     error_code = 0
                     base_offset = 0
                     log_start_offset = 0
-
-                    # Write record batch to disk
                     if record_batch_bytes:
                         topic_name_str = topic_name.decode("utf-8") if isinstance(topic_name, bytes) else topic_name
                         log_dir = f"/tmp/kraft-combined-logs/{topic_name_str}-{partition_index}"
                         os.makedirs(log_dir, exist_ok=True)
-                        log_path = f"{log_dir}/00000000000000000000.log"
-                        with open(log_path, "ab") as f:
+                        with open(f"{log_dir}/00000000000000000000.log", "ab") as f:
                             f.write(record_batch_bytes)
-
-            log_append_time = -1
-
-            partition_response = (
-                partition_index.to_bytes(4, "big") +
-                error_code.to_bytes(2, "big") +
-                base_offset.to_bytes(8, "big", signed=True) +
-                log_append_time.to_bytes(8, "big", signed=True) +
-                log_start_offset.to_bytes(8, "big", signed=True) +
-                b"\x01" +   # record_errors: empty compact array
-                b"\x01" +   # error_message: null compact string
-                b"\x00"     # tag buffer
-            )
-
+        
+                partition_responses += (
+                    partition_index.to_bytes(4, "big") +
+                    error_code.to_bytes(2, "big") +
+                    base_offset.to_bytes(8, "big", signed=True) +
+                    (-1).to_bytes(8, "big", signed=True) +   # log_append_time_ms
+                    log_start_offset.to_bytes(8, "big", signed=True) +
+                    b"\x01" +   # record_errors: empty compact array
+                    b"\x01" +   # error_message: null
+                    b"\x00"     # tag buffer
+                )
+        
             topic_response = (
                 bytes([len(topic_name) + 1]) + topic_name +
-                b"\x02" +
-                partition_response +
-                b"\x00"
+                bytes([num_partitions + 1]) +   # compact array length
+                partition_responses +
+                b"\x00"     # topic tag buffer
             )
-
+        
             body = (
-                b"\x02" +
+                b"\x02" +                # topics compact array (1 element)
                 topic_response +
                 b"\x00\x00\x00\x00" +   # throttle_time_ms
-                b"\x00"
+                b"\x00"                  # tag buffer
             )
-
+        
             response = correlation_id + b"\x00" + body
             conn.sendall(len(response).to_bytes(4, "big") + response)
-
         elif api_key == 75:  # DescribeTopicPartitions
             client_id_length = int.from_bytes(data[12:14], "big", signed=True)
             if client_id_length < 0:
