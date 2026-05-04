@@ -235,7 +235,6 @@ def handle_client(conn):
             idx += max(records_len, 0)
 
             idx = skip_tag_buffer(data, idx)
-            idx = skip_tag_buffer(data, idx)
 
             print(f"DEBUG topic={topic_name} topic_id={get_topic_id(topic_name)} partition_count={get_partition_count(topic_name)}", flush=True)
 
