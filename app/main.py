@@ -3,7 +3,8 @@ import threading
 import os
 import struct
 
-LOG_DATA = "/tmp/kraft-combined-logs/__cluster_metadata-0/00000000000000000000.log"
+DEFAULT_LOG_DIR = "/tmp/kraft-combined-logs"
+LOG_DIR = DEFAULT_LOG_DIR
 
 
 def encode_compact_size(n):
@@ -16,8 +17,9 @@ def encode_compact_size(n):
 
 
 def load_log_data():
+    log_data_path = os.path.join(LOG_DIR, "__cluster_metadata-0", "00000000000000000000.log")
     try:
-        with open(LOG_DATA, "rb") as f:
+        with open(log_data_path, "rb") as f:
             return f.read()
     except FileNotFoundError:
         return b""
@@ -38,6 +40,22 @@ def decode_varint(data, offset):
 def decode_signed_varint(data, offset):
     uval, offset = decode_varint(data, offset)
     return (uval >> 1) ^ -(uval & 1), offset
+
+
+def decode_compact_length(data, offset):
+    length, offset = decode_varint(data, offset)
+    return length - 1, offset
+
+
+def decode_compact_string(data, offset):
+    length, offset = decode_compact_length(data, offset)
+    value = data[offset:offset + length]
+    return value, offset + length
+
+
+def skip_tag_buffer(data, offset):
+    _, offset = decode_varint(data, offset)
+    return offset
 
 
 def parse_cluster_metadata():
@@ -195,37 +213,30 @@ def handle_client(conn):
             idx += 1  # tag buffer
 
             # transactional_id: compact nullable string
-            txn_id_len = data[idx] - 1
-            idx += 1
+            txn_id_len, idx = decode_compact_length(data, idx)
             if txn_id_len > 0:
                 idx += txn_id_len
+            idx = skip_tag_buffer(data, idx)
 
             idx += 2  # acks
             idx += 4  # timeout_ms
 
-            num_topics = data[idx] - 1
-            idx += 1
-
-            topic_name_len = data[idx] - 1
-            idx += 1
-            topic_name = data[idx:idx+topic_name_len]
-            idx += topic_name_len
+            _, idx = decode_compact_length(data, idx)
+            topic_name, idx = decode_compact_string(data, idx)
+            idx = skip_tag_buffer(data, idx)
 
             # partition_data compact array
-            num_partitions = data[idx] - 1
-            idx += 1
-
+            _, idx = decode_compact_length(data, idx)
             partition_index = int.from_bytes(data[idx:idx+4], "big")
             idx += 4
 
-            idx += 4  # current_leader_epoch
-        
-            # records: compact bytes field (varint of len+1, then raw bytes)
-            records_len_varint, idx = decode_varint(data, idx)
-            records_len = records_len_varint - 1
+            records_len, idx = decode_compact_length(data, idx)
             record_batch_bytes = data[idx:idx + records_len] if records_len > 0 else b""
+            idx += max(records_len, 0)
 
-            print(f"DEBUG records_len_varint={records_len_varint} records_len={records_len} batch_len={len(record_batch_bytes)}", flush=True)
+            idx = skip_tag_buffer(data, idx)
+            idx = skip_tag_buffer(data, idx)
+
             print(f"DEBUG topic={topic_name} topic_id={get_topic_id(topic_name)} partition_count={get_partition_count(topic_name)}", flush=True)
 
             # Validate using proper metadata parsing
@@ -249,9 +260,9 @@ def handle_client(conn):
                     # Write record batch to disk
                     if record_batch_bytes:
                         topic_name_str = topic_name.decode("utf-8") if isinstance(topic_name, bytes) else topic_name
-                        log_dir = f"/tmp/kraft-combined-logs/{topic_name_str}-{partition_index}"
+                        log_dir = os.path.join(LOG_DIR, f"{topic_name_str}-{partition_index}")
                         os.makedirs(log_dir, exist_ok=True)
-                        log_path = f"{log_dir}/00000000000000000000.log"
+                        log_path = os.path.join(log_dir, "00000000000000000000.log")
                         with open(log_path, "ab") as f:
                             f.write(record_batch_bytes)
 
