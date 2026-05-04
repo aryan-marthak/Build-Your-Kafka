@@ -206,73 +206,75 @@ def handle_client(conn):
             num_topics = data[idx] - 1
             idx += 1
         
-            topic_name_len = data[idx] - 1
-            idx += 1
-            topic_name = data[idx:idx+topic_name_len]
-            idx += topic_name_len
+            topics_body = b""
         
-            # partition_data compact array - loop over ALL partitions
-            num_partitions = data[idx] - 1
-            idx += 1
+            for _ in range(num_topics):
+                topic_name_len = data[idx] - 1
+                idx += 1
+                topic_name = data[idx:idx+topic_name_len]
+                idx += topic_name_len
         
-            topic_id = get_topic_id(topic_name)
-            partition_count = get_partition_count(topic_name) if topic_id else 0
+                num_partitions = data[idx] - 1
+                idx += 1
         
-            partition_responses = b""
+                topic_id = get_topic_id(topic_name)
+                partition_count = get_partition_count(topic_name) if topic_id else 0
         
-            for _ in range(num_partitions):
-                partition_index = int.from_bytes(data[idx:idx+4], "big")
-                idx += 4
+                partition_responses = b""
         
-                # records: compact bytes field (varint of len+1, then raw bytes)
-                records_len_varint, idx = decode_varint(data, idx)
-                records_len = records_len_varint - 1
-                record_batch_bytes = data[idx:idx + records_len] if records_len > 0 else b""
-                idx += max(0, records_len)
-                idx += 1  # partition tag buffer
+                for _ in range(num_partitions):
+                    partition_index = int.from_bytes(data[idx:idx+4], "big")
+                    idx += 4
         
-                if topic_id is None or partition_index >= partition_count:
-                    error_code = 3
-                    base_offset = -1
-                    log_start_offset = -1
-                else:
-                    error_code = 0
-                    base_offset = 0
-                    log_start_offset = 0
-                    if record_batch_bytes:
-                        topic_name_str = topic_name.decode("utf-8") if isinstance(topic_name, bytes) else topic_name
-                        log_dir = f"/tmp/kraft-combined-logs/{topic_name_str}-{partition_index}"
-                        os.makedirs(log_dir, exist_ok=True)
-                        with open(f"{log_dir}/00000000000000000000.log", "ab") as f:
-                            f.write(record_batch_bytes)
+                    records_len_varint, idx = decode_varint(data, idx)
+                    records_len = records_len_varint - 1
+                    record_batch_bytes = data[idx:idx + records_len] if records_len > 0 else b""
+                    idx += max(0, records_len)
+                    idx += 1  # partition tag buffer
         
-                partition_responses += (
-                    partition_index.to_bytes(4, "big") +
-                    error_code.to_bytes(2, "big") +
-                    base_offset.to_bytes(8, "big", signed=True) +
-                    (-1).to_bytes(8, "big", signed=True) +   # log_append_time_ms
-                    log_start_offset.to_bytes(8, "big", signed=True) +
-                    b"\x01" +   # record_errors: empty compact array
-                    b"\x01" +   # error_message: null
-                    b"\x00"     # tag buffer
+                    if topic_id is None or partition_index >= partition_count:
+                        error_code = 3
+                        base_offset = -1
+                        log_start_offset = -1
+                    else:
+                        error_code = 0
+                        base_offset = 0
+                        log_start_offset = 0
+                        if record_batch_bytes:
+                            topic_name_str = topic_name.decode("utf-8") if isinstance(topic_name, bytes) else topic_name
+                            log_dir = f"/tmp/kraft-combined-logs/{topic_name_str}-{partition_index}"
+                            os.makedirs(log_dir, exist_ok=True)
+                            with open(f"{log_dir}/00000000000000000000.log", "ab") as f:
+                                f.write(record_batch_bytes)
+        
+                    partition_responses += (
+                        partition_index.to_bytes(4, "big") +
+                        error_code.to_bytes(2, "big") +
+                        base_offset.to_bytes(8, "big", signed=True) +
+                        (-1).to_bytes(8, "big", signed=True) +
+                        log_start_offset.to_bytes(8, "big", signed=True) +
+                        b"\x01" +
+                        b"\x01" +
+                        b"\x00"
+                    )
+        
+                topics_body += (
+                    bytes([len(topic_name) + 1]) + topic_name +
+                    bytes([num_partitions + 1]) +
+                    partition_responses +
+                    b"\x00"  # topic tag buffer
                 )
         
-            topic_response = (
-                bytes([len(topic_name) + 1]) + topic_name +
-                bytes([num_partitions + 1]) +   # compact array length
-                partition_responses +
-                b"\x00"     # topic tag buffer
-            )
-        
             body = (
-                b"\x02" +                # topics compact array (1 element)
-                topic_response +
-                b"\x00\x00\x00\x00" +   # throttle_time_ms
-                b"\x00"                  # tag buffer
+                bytes([num_topics + 1]) +   # topics compact array
+                topics_body +
+                b"\x00\x00\x00\x00" +       # throttle_time_ms
+                b"\x00"                      # tag buffer
             )
         
             response = correlation_id + b"\x00" + body
             conn.sendall(len(response).to_bytes(4, "big") + response)
+    
         elif api_key == 75:  # DescribeTopicPartitions
             client_id_length = int.from_bytes(data[12:14], "big", signed=True)
             if client_id_length < 0:
