@@ -218,7 +218,6 @@ def handle_client(conn):
             partition_index = int.from_bytes(data[idx:idx+4], "big")
             idx += 4
 
-            idx += 4  # current_leader_epoch
         
             # records: compact bytes field (varint of len+1, then raw bytes)
             records_len_varint, idx = decode_varint(data, idx)
